@@ -8,6 +8,9 @@ variables:
   git_sha:
     description: "Git SHA of the deployed commit"
     default: "local"
+  schedule_pause_status:
+    description: schedule pause status
+    default: PAUSED
 
 artifacts:
   default:
@@ -20,5 +23,19 @@ targets:
     mode: development
     default: true
     workspace:
-      host: https://<your-databricks-workspace>
+      host: https://dbc-b1b2f91a-d102.cloud.databricks.com
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+  acc:
+    workspace:
+      host: https://dbc-b1b2f91a-d102.cloud.databricks.com
+      root_path: /Shared/.bundle/${bundle.target}/${bundle.name}
+    variables:
+      schedule_pause_status: PAUSED
+
+  prd:
+    workspace:
+      host: https://dbc-b1b2f91a-d102.cloud.databricks.com
+      root_path: /Shared/.bundle/${bundle.target}/${bundle.name}
+    variables:
+      schedule_pause_status: UNPAUSED
