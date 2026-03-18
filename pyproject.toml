@@ -47,6 +47,11 @@ include-package-data = true
 requires = ["setuptools>=72.0"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = [
+    "ruff>=0.15.6",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["your_custom_package*", "arch_designer_agent*"]
@@ -62,6 +67,7 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 90
 
+[tool.ruff.lint]
 select = [
     "F",    # pyflakes rules
     "E",    # pycodestyle error rules
@@ -72,7 +78,7 @@ select = [
     "SIM",  # flake8-simplify rules
     "ERA",  # eradicate rules
     "C",    # pylint convention rules
-    "ANN"   # flake8-annotations rules
+    "ANN",  # flake8-annotations rules
 ]
 
 ignore = [
@@ -82,8 +88,6 @@ ignore = [
     "C901",   # too complex
     "ERA001", # commented out code
     "ANN204",
-    "ANN102",
-    "ANN101"
 ]
 
 [tool.ruff.format]

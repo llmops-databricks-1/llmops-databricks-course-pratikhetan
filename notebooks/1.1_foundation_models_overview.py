@@ -125,7 +125,7 @@ logger.info(f"Output tokens: {response.usage.completion_tokens}")
 # MAGIC | Llama 3.2 3B | 46.429 | 92.857 |
 # MAGIC | Llama 3.2 1B | 42.857 | 85.714 |
 # MAGIC
-# MAGIC **Note**: DBU pricing varies by region and contract. Check [Databricks Pricing](https://www.databricks.com/product/pricing) for current rates.
+# MAGIC **Note**: DBU pricing varies by region and contract. Check [Databricks Pricing](https://www.databricks.com/product/pricing) for current rates.  # noqa: E501
 # MAGIC
 # MAGIC ### Cost Calculation Example
 
@@ -167,7 +167,7 @@ logger.info("Provisioned throughput becomes cost-effective at high, predictable 
 # MAGIC %md
 # MAGIC ## 4. External Models
 # MAGIC
-# MAGIC Databricks allows you to integrate external model providers through a unified interface.
+# MAGIC Databricks allows you to integrate external model providers through a unified interface.  # noqa: E501
 
 # COMMAND ----------
 
@@ -176,11 +176,11 @@ logger.info("Provisioned throughput becomes cost-effective at high, predictable 
 # MAGIC
 # MAGIC | Aspect | Foundation APIs | Provisioned Throughput | External Models |
 # MAGIC |--------|----------------|------------------------|-----------------|
-# MAGIC | **Pricing** | Pay-per-token | Pay-per-model-unit-hour | Pay-per-token (external) |
+# MAGIC | **Pricing** | Pay-per-token | Pay-per-model-unit-hour | Pay-per-token (external) |  # noqa: E501
 # MAGIC | **Performance** | Shared capacity | Dedicated capacity | Varies by provider |
 # MAGIC | **Latency** | Variable | Predictable | Variable |
 # MAGIC | **Fine-tuning** | No | Yes | Limited |
-# MAGIC | **Best For** | Variable workloads | High-volume, predictable | Specific model requirements |
+# MAGIC | **Best For** | Variable workloads | High-volume, predictable | Specific model requirements |  # noqa: E501
 # MAGIC | **Setup** | Instant | Requires provisioning | Requires credentials |
 
 # COMMAND ----------

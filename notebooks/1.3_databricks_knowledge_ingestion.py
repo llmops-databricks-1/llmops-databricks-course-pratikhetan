@@ -16,7 +16,8 @@ Builds a unified knowledge base across three source types, all written to
         • delta-io/delta          → best practices, streaming, optimisations
         • databricks/databricks-sdk-py → jobs, clusters, model serving, vector search
         • apache/spark            → structured streaming, SQL tuning, cluster design
-      Path-whitelist filtered; stubs (< 200 words) and giant API refs (> 15k words) excluded.
+      Path-whitelist filtered; stubs (< 200 words) and giant API refs
+      (> 15k words) excluded.
       source_type = "oss_docs"
 
   Section 3 — Databricks Blog architecture posts
@@ -26,18 +27,16 @@ Builds a unified knowledge base across three source types, all written to
 """
 
 import hashlib
-import re
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import requests
 import trafilatura
 from delta.tables import DeltaTable
 from loguru import logger
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from arch_designer_agent.config import get_env, load_config
@@ -83,7 +82,9 @@ def _make_doc_id(key: str) -> str:
     return hashlib.md5(key.encode()).hexdigest()
 
 
-def _gh_get(url: str, params: dict | None = None, max_retries: int = 4) -> dict | list | None:
+def _gh_get(
+    url: str, params: dict | None = None, max_retries: int = 4
+) -> dict | list | None:
     """GitHub API GET with exponential backoff on rate-limit responses."""
     for attempt in range(max_retries):
         resp = requests.get(url, headers=_GH_HEADERS, params=params, timeout=20)
@@ -91,8 +92,14 @@ def _gh_get(url: str, params: dict | None = None, max_retries: int = 4) -> dict 
             return resp.json()
         if resp.status_code in (429, 403, 503):
             reset = resp.headers.get("X-RateLimit-Reset")
-            wait  = max(int(reset) - int(time.time()) + 2, 5) if reset else 10 * (2 ** attempt)
-            logger.warning(f"HTTP {resp.status_code} — sleeping {wait}s (attempt {attempt+1})")
+            wait = (
+                max(int(reset) - int(time.time()) + 2, 5)
+                if reset
+                else 10 * (2**attempt)
+            )
+            logger.warning(
+                f"HTTP {resp.status_code} — sleeping {wait}s (attempt {attempt+1})"
+            )
             time.sleep(wait)
             continue
         if resp.status_code == 404:
@@ -112,7 +119,7 @@ def _raw_get(url: str) -> str | None:
 
 def _clean_markdown(text: str, max_chars: int = 50_000) -> str:
     """Strip image lines, collapse whitespace, cap length."""
-    lines = [l for l in text.splitlines() if not l.strip().startswith("![")]
+    lines = [line for line in text.splitlines() if not line.strip().startswith("![")]
     return "\n".join(lines)[:max_chars]
 
 
@@ -138,7 +145,7 @@ KB_SCHEMA = StructType([
     StructField("ingestion_timestamp",  StringType(),  True),
 ])
 
-_NOW = datetime.now(timezone.utc).isoformat()
+_NOW = datetime.now(UTC).isoformat()
 
 
 # COMMAND ----------
@@ -153,7 +160,7 @@ _ACC_MIN_STARS   = 0
 _ACC_MIN_WORDS   = 100
 _ACC_MAX_AGE_YRS = 4
 
-_CUTOFF_DATE = (datetime.now(timezone.utc) - timedelta(days=_ACC_MAX_AGE_YRS * 365)).isoformat()
+_CUTOFF_DATE = (datetime.now(UTC) - timedelta(days=_ACC_MAX_AGE_YRS * 365)).isoformat()
 
 
 def _list_org_repos(org: str) -> list[dict]:
@@ -235,7 +242,10 @@ with ThreadPoolExecutor(max_workers=10) as exe:
         except Exception as exc:
             logger.warning(f"  Accelerator error {futures[future]}: {exc}")
 
-logger.info(f"Section 1 complete: {len(acc_docs)} accelerators (filtered from {len(raw_repos)})")
+logger.info(
+    f"Section 1 complete: {len(acc_docs)} accelerators"
+    f" (filtered from {len(raw_repos)})"
+)
 
 # COMMAND ----------
 # =============================================================================
@@ -327,7 +337,7 @@ _DIRECT_URL_SOURCES = [
     ("delta-io/delta",  _DELTA_URLS),
     ("apache/spark",    _SPARK_URLS),
     ("mlflow/mlflow",   _MLFLOW_URLS),
-        ("databricks/docs",     _DATABRICKS_DOCS_URLS),
+    ("databricks/docs", _DATABRICKS_DOCS_URLS),
 ]
 
 _OSS_MIN_WORDS = 100
@@ -398,7 +408,8 @@ def _fetch_url_doc(title: str, url: str, source_repo: str) -> dict | None:
 _GH_SOURCES: dict[str, dict] = {
     "mlflow/mlflow": {
         "branch":    "master",
-        "scan_dirs": ["docs", "docs/source"],  # try docs/ first; Sphinx RST may be at either level
+        # try docs/ first; Sphinx RST may be at either level
+        "scan_dirs": ["docs", "docs/source"],
         "keywords":  ["tracking", "model", "registry", "deploy", "serving",
                       "evaluation", "tracing", "llm", "langchain", "gateway",
                       "autolog", "recipes", "projects", "quickstart", "concept",
@@ -431,7 +442,8 @@ def _list_repo_files(repo: str, branch: str, directory: str) -> tuple[list[dict]
     as fallbacks so the call succeeds even when the default branch name is uncertain.
     Returns (files, resolved_branch).
     """
-    candidates = list(dict.fromkeys([branch, "master", "main"]))  # deduplicated, order preserved
+    # deduplicated, order preserved
+    candidates = list(dict.fromkeys([branch, "master", "main"]))
     for br in candidates:
         data = _gh_get(f"{GH_API}/repos/{repo}/contents/{directory}",
                        params={"ref": br})
@@ -455,17 +467,24 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
         cfg["branch"], cfg["keywords"], cfg["exts"], cfg["scan_dirs"]
     )
     docs = []
-    seen_paths: set[str] = set()  # dedup when scan_dirs overlap (e.g. docs/source seen via docs)
+    # dedup across overlapping scan_dirs
+    seen_paths: set[str] = set()
     for directory in scan_dirs:
         raw_files, resolved_br = _list_repo_files(repo, branch, directory)
         ext_ok = [f for f in raw_files
                   if ("."+f.get("path","").rsplit(".",1)[-1].lower()) in exts]
-        kw_ok  = [f for f in ext_ok
-                  if not any(skip in f.get("path","").rsplit("/",1)[-1].rsplit(".",1)[0].lower()
-                             for skip in _SKIP_NAMES)
-                  and any(kw in f.get("path","").lower() for kw in keywords)]
-        logger.info(f"      {directory} (branch={resolved_br}): "
-                    f"{len(raw_files)} files → {len(ext_ok)} ext-match → {len(kw_ok)} kw-match")
+        kw_ok = [
+            f for f in ext_ok
+            if not any(
+                skip in f.get("path", "").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                for skip in _SKIP_NAMES
+            )
+            and any(kw in f.get("path", "").lower() for kw in keywords)
+        ]
+        logger.info(
+            f"      {directory} (branch={resolved_br}): "
+            f"{len(raw_files)} files → {len(ext_ok)} ext-match → {len(kw_ok)} kw-match"
+        )
         for f in kw_ok:
             path = f.get("path", "")
             if path in seen_paths:
@@ -499,7 +518,7 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
             })
         time.sleep(0.2)
     return docs
- 
+
 
 # --- Run Section 2 ---------------------------------------------------------
 logger.info("=== Section 2: OSS Docs ===")
@@ -559,7 +578,7 @@ _BLOG_KEYWORDS = [
 _BLOG_MAX_AGE_DAYS = 3 * 365     # only posts from last 3 years
 _BLOG_MIN_WORDS    = 300
 _BLOG_MAX_WORKERS  = 5
-_CUTOFF_BLOG = datetime.now(timezone.utc) - timedelta(days=_BLOG_MAX_AGE_DAYS)
+_CUTOFF_BLOG = datetime.now(UTC) - timedelta(days=_BLOG_MAX_AGE_DAYS)
 
 
 def _parse_rss(url: str) -> list[dict]:
@@ -569,7 +588,6 @@ def _parse_rss(url: str) -> list[dict]:
         if resp.status_code != 200:
             return []
         root = ET.fromstring(resp.text)
-        ns   = {"atom": "http://www.w3.org/2005/Atom"}
         items = []
         for item in root.iter("item"):
             title    = (item.findtext("title") or "").strip()
@@ -586,7 +604,7 @@ def _parse_rss(url: str) -> list[dict]:
 def _parse_pub_date(date_str: str) -> datetime | None:
     for fmt in ["%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S GMT"]:
         try:
-            return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+            return datetime.strptime(date_str, fmt).replace(tzinfo=UTC)
         except ValueError:
             continue
     return None
@@ -653,7 +671,10 @@ for feed_url in _BLOG_RSS_FEEDS:
             seen_links.add(item["link"])
             all_items.append(item)
 
-logger.info(f"  {len(all_items)} unique RSS items collected across {len(_BLOG_RSS_FEEDS)} feeds")
+logger.info(
+    f"  {len(all_items)} unique RSS items collected"
+    f" across {len(_BLOG_RSS_FEEDS)} feeds"
+)
 
 blog_docs: list[dict] = []
 with ThreadPoolExecutor(max_workers=_BLOG_MAX_WORKERS) as exe:
@@ -666,7 +687,10 @@ with ThreadPoolExecutor(max_workers=_BLOG_MAX_WORKERS) as exe:
         except Exception as exc:
             logger.debug(f"  Blog fetch error {futures[future]}: {exc}")
 
-logger.info(f"Section 3 complete: {len(blog_docs)} blog posts (from {len(all_items)} candidates)")
+logger.info(
+    f"Section 3 complete: {len(blog_docs)} blog posts"
+    f" (from {len(all_items)} candidates)"
+)
 
 # COMMAND ----------
 # =============================================================================
@@ -674,8 +698,11 @@ logger.info(f"Section 3 complete: {len(blog_docs)} blog posts (from {len(all_ite
 # =============================================================================
 
 all_docs = acc_docs + oss_docs + blog_docs
-logger.info(f"Total documents: {len(all_docs)} "
-            f"(accelerators={len(acc_docs)}, oss_docs={len(oss_docs)}, blog={len(blog_docs)})")
+logger.info(
+    f"Total documents: {len(all_docs)} "
+    f"(accelerators={len(acc_docs)}, oss_docs={len(oss_docs)},"
+    f" blog={len(blog_docs)})"
+)
 
 new_df = spark.createDataFrame(all_docs, schema=KB_SCHEMA)
 
@@ -707,7 +734,9 @@ logger.info(f"Table {FULL_TABLE}: {total} rows total")
 # SECTION 5 — Summary Stats
 # =============================================================================
 
-from pyspark.sql.functions import count, sum as _sum, avg, max as _max
+from pyspark.sql.functions import avg, count  # noqa: E402
+from pyspark.sql.functions import max as _max  # noqa: E402
+from pyspark.sql.functions import sum as _sum  # noqa: E402
 
 stats = (
     spark.table(FULL_TABLE)

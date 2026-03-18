@@ -17,7 +17,7 @@
 # MAGIC ```python
 # MAGIC from databricks.sdk import WorkspaceClient
 # MAGIC w = WorkspaceClient()
-# MAGIC openai_api_key = w.secrets.get_secret(scope="llmops_course", key="openai_key").value
+# MAGIC openai_api_key = w.secrets.get_secret(scope="llmops_course", key="openai_key").value  # noqa: E501
 # MAGIC ```
 # MAGIC
 # MAGIC **Using dbutils** (Databricks notebooks only):
@@ -84,12 +84,12 @@ except Exception:
 
 # COMMAND ----------
 
-from databricks.sdk import WorkspaceClient
-from openai import OpenAI
-import base64
-from io import BytesIO
-from PIL import Image
-import json
+import base64  # noqa: E402
+from io import BytesIO  # noqa: E402
+
+from databricks.sdk import WorkspaceClient  # noqa: E402
+from openai import OpenAI  # noqa: E402
+from PIL import Image  # noqa: E402
 
 w = WorkspaceClient()
 
@@ -129,7 +129,12 @@ response = client.images.generate(
 )
 
 logger.info("Image generated successfully!")
-logger.info(f"Prompt: {response.data[0].revised_prompt if hasattr(response.data[0], 'revised_prompt') else 'N/A'}")
+revised = (
+    response.data[0].revised_prompt
+    if hasattr(response.data[0], "revised_prompt")
+    else "N/A"
+)
+logger.info(f"Prompt: {revised}")
 logger.info("Response format: b64_json")
 
 # COMMAND ----------
@@ -145,7 +150,7 @@ image_bytes = base64.b64decode(image_data)
 image = Image.open(BytesIO(image_bytes))
 
 # Display in notebook
-display(image)
+display(image)  # noqa: F821
 
 # Optionally save to file
 # image.save("/dbfs/tmp/generated_image.png")
