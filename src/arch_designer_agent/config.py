@@ -1,4 +1,4 @@
-"""Configuration management for Databricks Architecture Designer Agent."""
+"""Configuration management for Databricks Architecture Design & Optimization Agent."""
 
 import os
 from pathlib import Path
@@ -21,7 +21,7 @@ class ProjectConfig(BaseModel):
     vector_search_endpoint: str = Field(..., description="Vector search endpoint name")
     genie_space_id: str | None = Field(None, description="Genie space ID for MCP integration")
     system_prompt: str = Field(
-        default="You are a Databricks Architecture Designer Agent. You help users design, evaluate, and optimise data and AI architectures on the Databricks Lakehouse Platform.",
+        default="You are a Databricks Architecture Design & Optimization Agent. You help users design, evaluate, and optimize data and AI architectures, and provide performance and best practice guidance for the Databricks Lakehouse Platform.",
         description="System prompt for the agent"
     )
     

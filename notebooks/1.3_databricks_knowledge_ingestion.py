@@ -265,6 +265,20 @@ _DELTA_URLS = [
     ("Delta Lake Storage Configuration",   "https://docs.delta.io/latest/delta-storage.html"),
 ]
 
+    # Databricks public docs — architecture & optimization
+_DATABRICKS_DOCS_URLS = [
+        ("Databricks Performance Tuning", "https://docs.databricks.com/en/optimizations/performance-tuning.html"),
+        ("Databricks Cluster Sizing", "https://docs.databricks.com/en/clusters/cluster-sizing.html"),
+        ("Databricks SQL Optimization", "https://docs.databricks.com/en/sql/performance.html"),
+        ("Databricks Delta Lake Optimization", "https://docs.databricks.com/en/delta/optimizations.html"),
+        ("Databricks Best Practices", "https://docs.databricks.com/en/best-practices.html"),
+        ("Databricks Monitoring", "https://docs.databricks.com/en/monitoring/index.html"),
+        ("Databricks Architecture Overview", "https://docs.databricks.com/en/architecture/index.html"),
+        ("Databricks Security Architecture", "https://docs.databricks.com/en/security/index.html"),
+        ("Databricks Lakehouse Design", "https://docs.databricks.com/en/lakehouse/index.html"),
+        ("Databricks MLflow Architecture", "https://docs.databricks.com/en/mlflow/index.html"),
+    ]
+
 # Apache Spark docs  (spark.apache.org) — server-rendered HTML, trafilatura works well
 # structured-streaming-programming-guide.html and sql-data-sources.html return None
 # from trafilatura (likely too large / extraction fails); replaced with sub-pages.
@@ -313,6 +327,7 @@ _DIRECT_URL_SOURCES = [
     ("delta-io/delta",  _DELTA_URLS),
     ("apache/spark",    _SPARK_URLS),
     ("mlflow/mlflow",   _MLFLOW_URLS),
+        ("databricks/docs",     _DATABRICKS_DOCS_URLS),
 ]
 
 _OSS_MIN_WORDS = 100
