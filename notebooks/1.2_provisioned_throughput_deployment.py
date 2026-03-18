@@ -1,4 +1,10 @@
 # Databricks notebook source
+"""
+Lecture 1.2: Provisioned Throughput Deployment.
+
+Covers deploying models with dedicated capacity, monitoring endpoints,
+and cost estimation for provisioned throughput.
+"""
 # MAGIC %md
 # MAGIC # Lecture 1.2: Provisioned Throughput Deployment
 # MAGIC - Your own fine-tuned models
@@ -89,6 +95,7 @@ BUDGET_POLICY_ID = None  # e.g. "my-budget-policy-id"
 
 # COMMAND ----------
 
+
 def endpoint_exists(endpoint_name: str) -> bool:
     """Check if serving endpoint exists."""
     try:
@@ -96,6 +103,7 @@ def endpoint_exists(endpoint_name: str) -> bool:
         return True
     except Exception:
         return False
+
 
 if endpoint_exists(ENDPOINT_NAME):
     logger.info(f"Endpoint '{ENDPOINT_NAME}' already exists")
@@ -156,6 +164,7 @@ w.serving_endpoints.create(
 
 # COMMAND ----------
 
+
 def wait_for_endpoint(endpoint_name: str, timeout_minutes: int = 30) -> bool | None:
     """Wait for endpoint to be ready."""
     start_time = time.time()
@@ -170,7 +179,7 @@ def wait_for_endpoint(endpoint_name: str, timeout_minutes: int = 30) -> bool | N
             logger.info(f"Status: config_update={config_state}, ready={ready_state}")
 
             # Check for failure state
-            if hasattr(endpoint.state, 'config_update_message'):
+            if hasattr(endpoint.state, "config_update_message"):
                 msg = endpoint.state.config_update_message
                 if msg:
                     logger.info(f"Message: {msg}")
@@ -183,7 +192,7 @@ def wait_for_endpoint(endpoint_name: str, timeout_minutes: int = 30) -> bool | N
             # Check if endpoint creation failed
             if config_state.value == "UPDATE_FAILED":
                 logger.error("Endpoint creation failed!")
-                if hasattr(endpoint.state, 'config_update_message'):
+                if hasattr(endpoint.state, "config_update_message"):
                     logger.error(f"Error: {endpoint.state.config_update_message}")
                 return False
 
@@ -201,6 +210,7 @@ def wait_for_endpoint(endpoint_name: str, timeout_minutes: int = 30) -> bool | N
             )
             return False
 
+
 # Uncomment to monitor deployment
 wait_for_endpoint(ENDPOINT_NAME)
 
@@ -215,10 +225,7 @@ wait_for_endpoint(ENDPOINT_NAME)
 host = w.config.host
 token = w.tokens.create(lifetime_seconds=1200).token_value
 
-client = OpenAI(
-    api_key=token,
-    base_url=f"{host}/serving-endpoints"
-)
+client = OpenAI(api_key=token, base_url=f"{host}/serving-endpoints")
 
 response = client.chat.completions.create(
     model=ENDPOINT_NAME,
@@ -230,7 +237,7 @@ response = client.chat.completions.create(
         },
     ],
     max_tokens=500,
-    temperature=0.7
+    temperature=0.7,
 )
 
 logger.info("Response:")
@@ -243,6 +250,7 @@ logger.info(f"Tokens used: {response.usage.total_tokens}")
 # MAGIC ## 4. Performance Monitoring
 
 # COMMAND ----------
+
 
 def get_endpoint_metrics(endpoint_name: str) -> object | None:
     """Get endpoint metrics and status."""
@@ -267,6 +275,7 @@ def get_endpoint_metrics(endpoint_name: str) -> object | None:
         logger.error(f"Error getting metrics: {e}")
         return None
 
+
 get_endpoint_metrics(ENDPOINT_NAME)
 
 # COMMAND ----------
@@ -275,6 +284,7 @@ get_endpoint_metrics(ENDPOINT_NAME)
 # MAGIC ## 5. Cost Estimation
 
 # COMMAND ----------
+
 
 def estimate_provisioned_cost(
     model_units: int,
@@ -304,6 +314,7 @@ def estimate_provisioned_cost(
     logger.info(f"  Effective cost: ${cost_per_million_tokens:.2f} per 1M tokens")
 
     return total_cost
+
 
 # Example: 50 model units, 8 hours/day, 30 days
 estimate_provisioned_cost(50, 8, 30)

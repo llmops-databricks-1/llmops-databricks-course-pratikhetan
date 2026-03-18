@@ -48,9 +48,9 @@ spark = SparkSession.builder.getOrCreate()
 env = get_env(spark)
 cfg = load_config("../project_config.yml", env)
 
-CATALOG    = cfg.catalog
-SCHEMA     = cfg.schema
-KB_TABLE   = "databricks_knowledge_base"
+CATALOG = cfg.catalog
+SCHEMA = cfg.schema
+KB_TABLE = "databricks_knowledge_base"
 FULL_TABLE = f"{CATALOG}.{SCHEMA}.{KB_TABLE}"
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
@@ -72,11 +72,12 @@ _GH_HEADERS = {"Accept": "application/vnd.github+json", "User-Agent": "llmops-co
 if GITHUB_TOKEN:
     _GH_HEADERS["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
-GH_API   = "https://api.github.com"
+GH_API = "https://api.github.com"
 RAW_BASE = "https://raw.githubusercontent.com"
 
 # COMMAND ----------
 # -- Shared helpers ------------------------------------------------------------
+
 
 def _make_doc_id(key: str) -> str:
     return hashlib.md5(key.encode()).hexdigest()
@@ -93,12 +94,10 @@ def _gh_get(
         if resp.status_code in (429, 403, 503):
             reset = resp.headers.get("X-RateLimit-Reset")
             wait = (
-                max(int(reset) - int(time.time()) + 2, 5)
-                if reset
-                else 10 * (2**attempt)
+                max(int(reset) - int(time.time()) + 2, 5) if reset else 10 * (2**attempt)
             )
             logger.warning(
-                f"HTTP {resp.status_code} — sleeping {wait}s (attempt {attempt+1})"
+                f"HTTP {resp.status_code} — sleeping {wait}s (attempt {attempt + 1})"
             )
             time.sleep(wait)
             continue
@@ -128,22 +127,24 @@ def _slugify_title(name: str) -> str:
 
 
 # Shared Delta schema
-KB_SCHEMA = StructType([
-    StructField("doc_id",               StringType(),  False),
-    StructField("source_type",          StringType(),  True),
-    StructField("source_repo",          StringType(),  True),
-    StructField("repo_name",            StringType(),  True),
-    StructField("title",                StringType(),  True),
-    StructField("description",          StringType(),  True),
-    StructField("topics",               StringType(),  True),
-    StructField("language",             StringType(),  True),
-    StructField("stars",                IntegerType(), True),
-    StructField("content_text",         StringType(),  True),
-    StructField("word_count",           IntegerType(), True),
-    StructField("url",                  StringType(),  True),
-    StructField("last_updated",         StringType(),  True),
-    StructField("ingestion_timestamp",  StringType(),  True),
-])
+KB_SCHEMA = StructType(
+    [
+        StructField("doc_id", StringType(), False),
+        StructField("source_type", StringType(), True),
+        StructField("source_repo", StringType(), True),
+        StructField("repo_name", StringType(), True),
+        StructField("title", StringType(), True),
+        StructField("description", StringType(), True),
+        StructField("topics", StringType(), True),
+        StructField("language", StringType(), True),
+        StructField("stars", IntegerType(), True),
+        StructField("content_text", StringType(), True),
+        StructField("word_count", IntegerType(), True),
+        StructField("url", StringType(), True),
+        StructField("last_updated", StringType(), True),
+        StructField("ingestion_timestamp", StringType(), True),
+    ]
+)
 
 _NOW = datetime.now(UTC).isoformat()
 
@@ -156,8 +157,8 @@ _NOW = datetime.now(UTC).isoformat()
 GH_ORG = "databricks-industry-solutions"
 
 # Quality filters
-_ACC_MIN_STARS   = 0
-_ACC_MIN_WORDS   = 100
+_ACC_MIN_STARS = 0
+_ACC_MIN_WORDS = 100
 _ACC_MAX_AGE_YRS = 4
 
 _CUTOFF_DATE = (datetime.now(UTC) - timedelta(days=_ACC_MAX_AGE_YRS * 365)).isoformat()
@@ -166,8 +167,10 @@ _CUTOFF_DATE = (datetime.now(UTC) - timedelta(days=_ACC_MAX_AGE_YRS * 365)).isof
 def _list_org_repos(org: str) -> list[dict]:
     repos, page = [], 1
     while True:
-        batch = _gh_get(f"{GH_API}/orgs/{org}/repos",
-                        params={"type": "public", "per_page": 100, "page": page})
+        batch = _gh_get(
+            f"{GH_API}/orgs/{org}/repos",
+            params={"type": "public", "per_page": 100, "page": page},
+        )
         if not batch:
             break
         repos.extend(batch)
@@ -189,10 +192,10 @@ def _fetch_readme(repo_name: str, branch: str = "main") -> str | None:
 
 
 def _process_accelerator(repo: dict) -> dict | None:
-    name    = repo.get("name", "")
-    stars   = repo.get("stargazers_count") or 0
+    name = repo.get("name", "")
+    stars = repo.get("stargazers_count") or 0
     updated = repo.get("pushed_at") or repo.get("updated_at") or ""
-    topics  = repo.get("topics") or []
+    topics = repo.get("topics") or []
 
     # Quality filters — org listing already guarantees Databricks repos
     if repo.get("archived"):
@@ -202,28 +205,28 @@ def _process_accelerator(repo: dict) -> dict | None:
     if updated < _CUTOFF_DATE:
         return None
 
-    branch  = repo.get("default_branch") or "main"
-    readme  = _fetch_readme(name, branch) or repo.get("description") or ""
+    branch = repo.get("default_branch") or "main"
+    readme = _fetch_readme(name, branch) or repo.get("description") or ""
     cleaned = _clean_markdown(readme)
-    wc      = len(cleaned.split())
+    wc = len(cleaned.split())
 
     if wc < _ACC_MIN_WORDS:
         return None
 
     return {
-        "doc_id":              _make_doc_id(f"acc:{name}"),
-        "source_type":         "accelerator",
-        "source_repo":         f"{GH_ORG}/{name}",
-        "repo_name":           name,
-        "title":               _slugify_title(name),
-        "description":         repo.get("description") or "",
-        "topics":              ", ".join(topics),
-        "language":            repo.get("language") or "",
-        "stars":               stars,
-        "content_text":        cleaned,
-        "word_count":          wc,
-        "url":                 repo.get("html_url") or f"https://github.com/{GH_ORG}/{name}",
-        "last_updated":        updated,
+        "doc_id": _make_doc_id(f"acc:{name}"),
+        "source_type": "accelerator",
+        "source_repo": f"{GH_ORG}/{name}",
+        "repo_name": name,
+        "title": _slugify_title(name),
+        "description": repo.get("description") or "",
+        "topics": ", ".join(topics),
+        "language": repo.get("language") or "",
+        "stars": stars,
+        "content_text": cleaned,
+        "word_count": wc,
+        "url": repo.get("html_url") or f"https://github.com/{GH_ORG}/{name}",
+        "last_updated": updated,
         "ingestion_timestamp": _NOW,
     }
 
@@ -243,8 +246,7 @@ with ThreadPoolExecutor(max_workers=10) as exe:
             logger.warning(f"  Accelerator error {futures[future]}: {exc}")
 
 logger.info(
-    f"Section 1 complete: {len(acc_docs)} accelerators"
-    f" (filtered from {len(raw_repos)})"
+    f"Section 1 complete: {len(acc_docs)} accelerators (filtered from {len(raw_repos)})"
 )
 
 # COMMAND ----------
@@ -261,82 +263,187 @@ logger.info(
 # --- Strategy A: Direct URL fetch (trafilatura) ----------------------------
 # Delta Lake OSS docs  (docs.delta.io) — Sphinx-generated static HTML
 _DELTA_URLS = [
-    ("Delta Lake Quick Start",             "https://docs.delta.io/latest/quick-start.html"),
-    ("Delta Lake Best Practices",          "https://docs.delta.io/latest/best-practices.html"),
-    ("Delta Lake Batch Reads and Writes",  "https://docs.delta.io/latest/delta-batch.html"),
-    ("Delta Lake Streaming",               "https://docs.delta.io/latest/delta-streaming.html"),
-    ("Delta Lake Table Utility Commands",  "https://docs.delta.io/latest/delta-utility.html"),
-    ("Delta Lake Optimizations",           "https://docs.delta.io/latest/optimizations-oss.html"),
-    ("Delta Lake Change Data Feed",        "https://docs.delta.io/latest/delta-change-data-feed.html"),
-    ("Delta Lake Concurrency Control",     "https://docs.delta.io/latest/concurrency-control.html"),
-    ("Delta Lake Column Mapping",          "https://docs.delta.io/latest/delta-column-mapping.html"),
-    ("Delta Lake Constraints",             "https://docs.delta.io/latest/delta-constraints.html"),
-    ("Delta Lake Uniform",                 "https://docs.delta.io/latest/delta-uniform.html"),
-    ("Delta Lake Storage Configuration",   "https://docs.delta.io/latest/delta-storage.html"),
+    ("Delta Lake Quick Start", "https://docs.delta.io/latest/quick-start.html"),
+    ("Delta Lake Best Practices", "https://docs.delta.io/latest/best-practices.html"),
+    (
+        "Delta Lake Batch Reads and Writes",
+        "https://docs.delta.io/latest/delta-batch.html",
+    ),
+    ("Delta Lake Streaming", "https://docs.delta.io/latest/delta-streaming.html"),
+    (
+        "Delta Lake Table Utility Commands",
+        "https://docs.delta.io/latest/delta-utility.html",
+    ),
+    ("Delta Lake Optimizations", "https://docs.delta.io/latest/optimizations-oss.html"),
+    (
+        "Delta Lake Change Data Feed",
+        "https://docs.delta.io/latest/delta-change-data-feed.html",
+    ),
+    (
+        "Delta Lake Concurrency Control",
+        "https://docs.delta.io/latest/concurrency-control.html",
+    ),
+    (
+        "Delta Lake Column Mapping",
+        "https://docs.delta.io/latest/delta-column-mapping.html",
+    ),
+    ("Delta Lake Constraints", "https://docs.delta.io/latest/delta-constraints.html"),
+    ("Delta Lake Uniform", "https://docs.delta.io/latest/delta-uniform.html"),
+    (
+        "Delta Lake Storage Configuration",
+        "https://docs.delta.io/latest/delta-storage.html",
+    ),
 ]
 
-    # Databricks public docs — architecture & optimization
+# Databricks public docs — architecture & optimization
 _DATABRICKS_DOCS_URLS = [
-        ("Databricks Performance Tuning", "https://docs.databricks.com/en/optimizations/performance-tuning.html"),
-        ("Databricks Cluster Sizing", "https://docs.databricks.com/en/clusters/cluster-sizing.html"),
-        ("Databricks SQL Optimization", "https://docs.databricks.com/en/sql/performance.html"),
-        ("Databricks Delta Lake Optimization", "https://docs.databricks.com/en/delta/optimizations.html"),
-        ("Databricks Best Practices", "https://docs.databricks.com/en/best-practices.html"),
-        ("Databricks Monitoring", "https://docs.databricks.com/en/monitoring/index.html"),
-        ("Databricks Architecture Overview", "https://docs.databricks.com/en/architecture/index.html"),
-        ("Databricks Security Architecture", "https://docs.databricks.com/en/security/index.html"),
-        ("Databricks Lakehouse Design", "https://docs.databricks.com/en/lakehouse/index.html"),
-        ("Databricks MLflow Architecture", "https://docs.databricks.com/en/mlflow/index.html"),
-    ]
+    (
+        "Databricks Performance Tuning",
+        "https://docs.databricks.com/en/optimizations/performance-tuning.html",
+    ),
+    (
+        "Databricks Cluster Sizing",
+        "https://docs.databricks.com/en/clusters/cluster-sizing.html",
+    ),
+    (
+        "Databricks SQL Optimization",
+        "https://docs.databricks.com/en/sql/performance.html",
+    ),
+    (
+        "Databricks Delta Lake Optimization",
+        "https://docs.databricks.com/en/delta/optimizations.html",
+    ),
+    ("Databricks Best Practices", "https://docs.databricks.com/en/best-practices.html"),
+    ("Databricks Monitoring", "https://docs.databricks.com/en/monitoring/index.html"),
+    (
+        "Databricks Architecture Overview",
+        "https://docs.databricks.com/en/architecture/index.html",
+    ),
+    (
+        "Databricks Security Architecture",
+        "https://docs.databricks.com/en/security/index.html",
+    ),
+    (
+        "Databricks Lakehouse Design",
+        "https://docs.databricks.com/en/lakehouse/index.html",
+    ),
+    (
+        "Databricks MLflow Architecture",
+        "https://docs.databricks.com/en/mlflow/index.html",
+    ),
+]
 
 # Apache Spark docs  (spark.apache.org) — server-rendered HTML, trafilatura works well
 # structured-streaming-programming-guide.html and sql-data-sources.html return None
 # from trafilatura (likely too large / extraction fails); replaced with sub-pages.
 _SPARK_URLS = [
-    ("Spark SQL Performance Tuning",           "https://spark.apache.org/docs/latest/sql-performance-tuning.html"),
-    ("Spark Configuration",                    "https://spark.apache.org/docs/latest/configuration.html"),
-    ("Spark SQL Programming Guide",            "https://spark.apache.org/docs/latest/sql-programming-guide.html"),
-    ("Spark SQL Data Sources Avro",            "https://spark.apache.org/docs/latest/sql-data-sources-avro.html"),
-    ("Spark Cluster Mode Overview",            "https://spark.apache.org/docs/latest/cluster-overview.html"),
-    ("Submitting Spark Applications",          "https://spark.apache.org/docs/latest/submitting-applications.html"),
-    ("Spark Monitoring and Instrumentation",   "https://spark.apache.org/docs/latest/monitoring.html"),
-    ("Spark Tuning Guide",                     "https://spark.apache.org/docs/latest/tuning.html"),
-    ("Spark SQL Data Sources Parquet",         "https://spark.apache.org/docs/latest/sql-data-sources-parquet.html"),
-    ("Spark SQL Data Sources JSON",            "https://spark.apache.org/docs/latest/sql-data-sources-json.html"),
-    ("Spark SQL Data Sources JDBC",            "https://spark.apache.org/docs/latest/sql-data-sources-jdbc.html"),
-    ("Spark MLlib Guide",                      "https://spark.apache.org/docs/latest/ml-guide.html"),
-    ("Spark on Kubernetes",                    "https://spark.apache.org/docs/latest/running-on-kubernetes.html"),
-    ("Spark on YARN",                          "https://spark.apache.org/docs/latest/running-on-yarn.html"),
-    ("RDD Programming Guide",                  "https://spark.apache.org/docs/latest/rdd-programming-guide.html"),
-    ("Spark Quick Start",                      "https://spark.apache.org/docs/latest/quick-start.html"),
+    (
+        "Spark SQL Performance Tuning",
+        "https://spark.apache.org/docs/latest/sql-performance-tuning.html",
+    ),
+    ("Spark Configuration", "https://spark.apache.org/docs/latest/configuration.html"),
+    (
+        "Spark SQL Programming Guide",
+        "https://spark.apache.org/docs/latest/sql-programming-guide.html",
+    ),
+    (
+        "Spark SQL Data Sources Avro",
+        "https://spark.apache.org/docs/latest/sql-data-sources-avro.html",
+    ),
+    (
+        "Spark Cluster Mode Overview",
+        "https://spark.apache.org/docs/latest/cluster-overview.html",
+    ),
+    (
+        "Submitting Spark Applications",
+        "https://spark.apache.org/docs/latest/submitting-applications.html",
+    ),
+    (
+        "Spark Monitoring and Instrumentation",
+        "https://spark.apache.org/docs/latest/monitoring.html",
+    ),
+    ("Spark Tuning Guide", "https://spark.apache.org/docs/latest/tuning.html"),
+    (
+        "Spark SQL Data Sources Parquet",
+        "https://spark.apache.org/docs/latest/sql-data-sources-parquet.html",
+    ),
+    (
+        "Spark SQL Data Sources JSON",
+        "https://spark.apache.org/docs/latest/sql-data-sources-json.html",
+    ),
+    (
+        "Spark SQL Data Sources JDBC",
+        "https://spark.apache.org/docs/latest/sql-data-sources-jdbc.html",
+    ),
+    ("Spark MLlib Guide", "https://spark.apache.org/docs/latest/ml-guide.html"),
+    (
+        "Spark on Kubernetes",
+        "https://spark.apache.org/docs/latest/running-on-kubernetes.html",
+    ),
+    ("Spark on YARN", "https://spark.apache.org/docs/latest/running-on-yarn.html"),
+    (
+        "RDD Programming Guide",
+        "https://spark.apache.org/docs/latest/rdd-programming-guide.html",
+    ),
+    ("Spark Quick Start", "https://spark.apache.org/docs/latest/quick-start.html"),
 ]
 
 # MLflow docs  (mlflow.org) — only python_api/* are static Sphinx HTML and reliably
 # extracted by trafilatura.  Concept pages (tracking.html, model-registry.html, etc.)
 # are React-rendered and return None.  Narrative docs come via GitHub traversal below.
 _MLFLOW_URLS = [
-    ("MLflow Module API",                      "https://mlflow.org/docs/latest/python_api/mlflow.html"),
-    ("MLflow Tracking API",                    "https://mlflow.org/docs/latest/python_api/mlflow.tracking.html"),
-    ("MLflow Models API",                      "https://mlflow.org/docs/latest/python_api/mlflow.models.html"),
-    ("MLflow Client API",                      "https://mlflow.org/docs/latest/python_api/mlflow.client.html"),
-    ("MLflow Pyfunc",                          "https://mlflow.org/docs/latest/python_api/mlflow.pyfunc.html"),
-    ("MLflow Spark Integration",               "https://mlflow.org/docs/latest/python_api/mlflow.spark.html"),
-    ("MLflow PyTorch Integration",             "https://mlflow.org/docs/latest/python_api/mlflow.pytorch.html"),
-    ("MLflow Sklearn Integration",             "https://mlflow.org/docs/latest/python_api/mlflow.sklearn.html"),
-    ("MLflow TensorFlow Integration",          "https://mlflow.org/docs/latest/python_api/mlflow.tensorflow.html"),
-    ("MLflow XGBoost Integration",             "https://mlflow.org/docs/latest/python_api/mlflow.xgboost.html"),
-    ("MLflow LightGBM Integration",            "https://mlflow.org/docs/latest/python_api/mlflow.lightgbm.html"),
-    ("MLflow LangChain Integration",           "https://mlflow.org/docs/latest/python_api/mlflow.langchain.html"),
-    ("MLflow OpenAI Integration",              "https://mlflow.org/docs/latest/python_api/mlflow.openai.html"),
-    ("MLflow Data API",                        "https://mlflow.org/docs/latest/python_api/mlflow.data.html"),
-    ("MLflow Metrics",                         "https://mlflow.org/docs/latest/python_api/mlflow.metrics.html"),
-    ("MLflow Artifacts API",                   "https://mlflow.org/docs/latest/python_api/mlflow.artifacts.html"),
+    ("MLflow Module API", "https://mlflow.org/docs/latest/python_api/mlflow.html"),
+    (
+        "MLflow Tracking API",
+        "https://mlflow.org/docs/latest/python_api/mlflow.tracking.html",
+    ),
+    ("MLflow Models API", "https://mlflow.org/docs/latest/python_api/mlflow.models.html"),
+    ("MLflow Client API", "https://mlflow.org/docs/latest/python_api/mlflow.client.html"),
+    ("MLflow Pyfunc", "https://mlflow.org/docs/latest/python_api/mlflow.pyfunc.html"),
+    (
+        "MLflow Spark Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.spark.html",
+    ),
+    (
+        "MLflow PyTorch Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.pytorch.html",
+    ),
+    (
+        "MLflow Sklearn Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.sklearn.html",
+    ),
+    (
+        "MLflow TensorFlow Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.tensorflow.html",
+    ),
+    (
+        "MLflow XGBoost Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.xgboost.html",
+    ),
+    (
+        "MLflow LightGBM Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.lightgbm.html",
+    ),
+    (
+        "MLflow LangChain Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.langchain.html",
+    ),
+    (
+        "MLflow OpenAI Integration",
+        "https://mlflow.org/docs/latest/python_api/mlflow.openai.html",
+    ),
+    ("MLflow Data API", "https://mlflow.org/docs/latest/python_api/mlflow.data.html"),
+    ("MLflow Metrics", "https://mlflow.org/docs/latest/python_api/mlflow.metrics.html"),
+    (
+        "MLflow Artifacts API",
+        "https://mlflow.org/docs/latest/python_api/mlflow.artifacts.html",
+    ),
 ]
 
 _DIRECT_URL_SOURCES = [
-    ("delta-io/delta",  _DELTA_URLS),
-    ("apache/spark",    _SPARK_URLS),
-    ("mlflow/mlflow",   _MLFLOW_URLS),
+    ("delta-io/delta", _DELTA_URLS),
+    ("apache/spark", _SPARK_URLS),
+    ("mlflow/mlflow", _MLFLOW_URLS),
     ("databricks/docs", _DATABRICKS_DOCS_URLS),
 ]
 
@@ -387,19 +494,19 @@ def _fetch_url_doc(title: str, url: str, source_repo: str) -> dict | None:
     if wc < _OSS_MIN_WORDS or wc > _OSS_MAX_WORDS:
         return None
     return {
-        "doc_id":              _make_doc_id(f"oss:{url}"),
-        "source_type":         "oss_docs",
-        "source_repo":         source_repo,
-        "repo_name":           source_repo.split("/")[-1],
-        "title":               title,
-        "description":         f"{source_repo} documentation: {title}",
-        "topics":              "",
-        "language":            "",
-        "stars":               0,
-        "content_text":        text[:50_000],
-        "word_count":          wc,
-        "url":                 url,
-        "last_updated":        "",
+        "doc_id": _make_doc_id(f"oss:{url}"),
+        "source_type": "oss_docs",
+        "source_repo": source_repo,
+        "repo_name": source_repo.split("/")[-1],
+        "title": title,
+        "description": f"{source_repo} documentation: {title}",
+        "topics": "",
+        "language": "",
+        "stars": 0,
+        "content_text": text[:50_000],
+        "word_count": wc,
+        "url": url,
+        "last_updated": "",
         "ingestion_timestamp": _NOW,
     }
 
@@ -407,34 +514,102 @@ def _fetch_url_doc(title: str, url: str, source_repo: str) -> dict | None:
 # --- Strategy B: GitHub traversal for MLflow narrative docs + SDK ----------
 _GH_SOURCES: dict[str, dict] = {
     "mlflow/mlflow": {
-        "branch":    "master",
+        "branch": "master",
         # try docs/ first; Sphinx RST may be at either level
         "scan_dirs": ["docs", "docs/source"],
-        "keywords":  ["tracking", "model", "registry", "deploy", "serving",
-                      "evaluation", "tracing", "llm", "langchain", "gateway",
-                      "autolog", "recipes", "projects", "quickstart", "concept",
-                      "guide", "tutorial", "intro", "configuration", "artifact",
-                      "experiment", "run", "metric", "param", "signature",
-                      "flavor", "plugin", "search", "backend", "sklearn",
-                      "pytorch", "tensorflow", "spark", "xgboost", "lightgbm",
-                      "transformers", "openai", "prompt", "chat", "mlflow"],
-        "exts":      {".rst", ".md"},
+        "keywords": [
+            "tracking",
+            "model",
+            "registry",
+            "deploy",
+            "serving",
+            "evaluation",
+            "tracing",
+            "llm",
+            "langchain",
+            "gateway",
+            "autolog",
+            "recipes",
+            "projects",
+            "quickstart",
+            "concept",
+            "guide",
+            "tutorial",
+            "intro",
+            "configuration",
+            "artifact",
+            "experiment",
+            "run",
+            "metric",
+            "param",
+            "signature",
+            "flavor",
+            "plugin",
+            "search",
+            "backend",
+            "sklearn",
+            "pytorch",
+            "tensorflow",
+            "spark",
+            "xgboost",
+            "lightgbm",
+            "transformers",
+            "openai",
+            "prompt",
+            "chat",
+            "mlflow",
+        ],
+        "exts": {".rst", ".md"},
     },
     "databricks/databricks-sdk-py": {
-        "branch":    "main",
+        "branch": "main",
         "scan_dirs": ["docs"],
-        "keywords":  ["jobs", "clusters", "serving", "vector", "secrets",
-                      "workflows", "pipelines", "experiments", "models",
-                      "permissions", "sql", "compute", "catalog", "files",
-                      "apps", "marketplace", "dashboards", "unity", "repos",
-                      "tokens", "warehouses", "alerts", "queries", "instance",
-                      "libraries", "policies", "pools", "endpoints", "tables"],
-        "exts":      {".rst", ".md"},
+        "keywords": [
+            "jobs",
+            "clusters",
+            "serving",
+            "vector",
+            "secrets",
+            "workflows",
+            "pipelines",
+            "experiments",
+            "models",
+            "permissions",
+            "sql",
+            "compute",
+            "catalog",
+            "files",
+            "apps",
+            "marketplace",
+            "dashboards",
+            "unity",
+            "repos",
+            "tokens",
+            "warehouses",
+            "alerts",
+            "queries",
+            "instance",
+            "libraries",
+            "policies",
+            "pools",
+            "endpoints",
+            "tables",
+        ],
+        "exts": {".rst", ".md"},
     },
 }
 
-_SKIP_NAMES = {"changelog", "contributing", "license", "migration",
-               "release-notes", "release_notes", "history", "authors", "roadmap"}
+_SKIP_NAMES = {
+    "changelog",
+    "contributing",
+    "license",
+    "migration",
+    "release-notes",
+    "release_notes",
+    "history",
+    "authors",
+    "roadmap",
+}
 
 
 def _list_repo_files(repo: str, branch: str, directory: str) -> tuple[list[dict], str]:
@@ -445,8 +620,7 @@ def _list_repo_files(repo: str, branch: str, directory: str) -> tuple[list[dict]
     # deduplicated, order preserved
     candidates = list(dict.fromkeys([branch, "master", "main"]))
     for br in candidates:
-        data = _gh_get(f"{GH_API}/repos/{repo}/contents/{directory}",
-                       params={"ref": br})
+        data = _gh_get(f"{GH_API}/repos/{repo}/contents/{directory}", params={"ref": br})
         if not isinstance(data, list):
             continue  # 404 or error — try next branch
         files = []
@@ -454,8 +628,9 @@ def _list_repo_files(repo: str, branch: str, directory: str) -> tuple[list[dict]
             if item.get("type") == "file":
                 files.append(item)
             elif item.get("type") == "dir":
-                sub = _gh_get(f"{GH_API}/repos/{repo}/contents/{item['path']}",
-                              params={"ref": br})
+                sub = _gh_get(
+                    f"{GH_API}/repos/{repo}/contents/{item['path']}", params={"ref": br}
+                )
                 if isinstance(sub, list):
                     files.extend(f for f in sub if f.get("type") == "file")
         return files, br
@@ -464,17 +639,24 @@ def _list_repo_files(repo: str, branch: str, directory: str) -> tuple[list[dict]
 
 def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
     branch, keywords, exts, scan_dirs = (
-        cfg["branch"], cfg["keywords"], cfg["exts"], cfg["scan_dirs"]
+        cfg["branch"],
+        cfg["keywords"],
+        cfg["exts"],
+        cfg["scan_dirs"],
     )
     docs = []
     # dedup across overlapping scan_dirs
     seen_paths: set[str] = set()
     for directory in scan_dirs:
         raw_files, resolved_br = _list_repo_files(repo, branch, directory)
-        ext_ok = [f for f in raw_files
-                  if ("."+f.get("path","").rsplit(".",1)[-1].lower()) in exts]
+        ext_ok = [
+            f
+            for f in raw_files
+            if ("." + f.get("path", "").rsplit(".", 1)[-1].lower()) in exts
+        ]
         kw_ok = [
-            f for f in ext_ok
+            f
+            for f in ext_ok
             if not any(
                 skip in f.get("path", "").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
                 for skip in _SKIP_NAMES
@@ -490,7 +672,7 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
             if path in seen_paths:
                 continue
             seen_paths.add(path)
-            stem    = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
             content = _raw_get(
                 f.get("download_url") or f"{RAW_BASE}/{repo}/{resolved_br}/{path}"
             )
@@ -500,22 +682,25 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
             wc = len(cleaned.split())
             if wc < _OSS_MIN_WORDS or wc > _OSS_MAX_WORDS:
                 continue
-            docs.append({
-                "doc_id":              _make_doc_id(f"oss:{repo}:{path}"),
-                "source_type":         "oss_docs",
-                "source_repo":         repo,
-                "repo_name":           repo.split("/")[-1],
-                "title":               _slugify_title(stem),
-                "description":         f"{repo} documentation: {_slugify_title(stem)}",
-                "topics":              "",
-                "language":            "",
-                "stars":               0,
-                "content_text":        cleaned,
-                "word_count":          wc,
-                "url":                 f.get("html_url") or f"https://github.com/{repo}/blob/{resolved_br}/{path}",
-                "last_updated":        "",
-                "ingestion_timestamp": _NOW,
-            })
+            docs.append(
+                {
+                    "doc_id": _make_doc_id(f"oss:{repo}:{path}"),
+                    "source_type": "oss_docs",
+                    "source_repo": repo,
+                    "repo_name": repo.split("/")[-1],
+                    "title": _slugify_title(stem),
+                    "description": f"{repo} documentation: {_slugify_title(stem)}",
+                    "topics": "",
+                    "language": "",
+                    "stars": 0,
+                    "content_text": cleaned,
+                    "word_count": wc,
+                    "url": f.get("html_url")
+                    or f"https://github.com/{repo}/blob/{resolved_br}/{path}",
+                    "last_updated": "",
+                    "ingestion_timestamp": _NOW,
+                }
+            )
         time.sleep(0.2)
     return docs
 
@@ -563,21 +748,62 @@ _BLOG_RSS_FEEDS = [
 ]
 
 _BLOG_KEYWORDS = [
-    "architecture", "design", "pipeline", "lakehouse", "llm", "agent",
-    "rag", "mlops", "deploy", "streaming", "delta", "vector search",
-    "best practice", "reference", "pattern", "workflow", "fine-tun",
-    "inference", "databricks", "mosaic", "unity catalog",
-    "spark", "mlflow", "feature store", "automl", "model serving",
-    "real-time", "batch", "etl", "data engineering", "data science",
-    "foundation model", "embedding", "retrieval", "chatbot", "copilot",
-    "governance", "lineage", "catalog", "lakehouse", "genie",
-    "photon", "serverless", "dlt", "live tables", "medallion",
-    "bronze", "silver", "gold", "data mesh", "platform",
+    "architecture",
+    "design",
+    "pipeline",
+    "lakehouse",
+    "llm",
+    "agent",
+    "rag",
+    "mlops",
+    "deploy",
+    "streaming",
+    "delta",
+    "vector search",
+    "best practice",
+    "reference",
+    "pattern",
+    "workflow",
+    "fine-tun",
+    "inference",
+    "databricks",
+    "mosaic",
+    "unity catalog",
+    "spark",
+    "mlflow",
+    "feature store",
+    "automl",
+    "model serving",
+    "real-time",
+    "batch",
+    "etl",
+    "data engineering",
+    "data science",
+    "foundation model",
+    "embedding",
+    "retrieval",
+    "chatbot",
+    "copilot",
+    "governance",
+    "lineage",
+    "catalog",
+    "lakehouse",
+    "genie",
+    "photon",
+    "serverless",
+    "dlt",
+    "live tables",
+    "medallion",
+    "bronze",
+    "silver",
+    "gold",
+    "data mesh",
+    "platform",
 ]
 
-_BLOG_MAX_AGE_DAYS = 3 * 365     # only posts from last 3 years
-_BLOG_MIN_WORDS    = 300
-_BLOG_MAX_WORKERS  = 5
+_BLOG_MAX_AGE_DAYS = 3 * 365  # only posts from last 3 years
+_BLOG_MIN_WORDS = 300
+_BLOG_MAX_WORKERS = 5
 _CUTOFF_BLOG = datetime.now(UTC) - timedelta(days=_BLOG_MAX_AGE_DAYS)
 
 
@@ -590,8 +816,8 @@ def _parse_rss(url: str) -> list[dict]:
         root = ET.fromstring(resp.text)
         items = []
         for item in root.iter("item"):
-            title    = (item.findtext("title") or "").strip()
-            link     = (item.findtext("link") or "").strip()
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
             pub_date = (item.findtext("pubDate") or "").strip()
             if title and link:
                 items.append({"title": title, "link": link, "pub_date": pub_date})
@@ -616,9 +842,9 @@ def _title_matches_keywords(title: str) -> bool:
 
 
 def _fetch_blog_post(item: dict) -> dict | None:
-    url       = item["link"]
-    title     = item["title"]
-    pub_date  = item["pub_date"]
+    url = item["link"]
+    title = item["title"]
+    pub_date = item["pub_date"]
 
     # Recency filter
     dt = _parse_pub_date(pub_date)
@@ -633,8 +859,9 @@ def _fetch_blog_post(item: dict) -> dict | None:
     downloaded = trafilatura.fetch_url(url)
     if not downloaded:
         return None
-    text = trafilatura.extract(downloaded, include_comments=False,
-                               include_tables=False, no_fallback=False)
+    text = trafilatura.extract(
+        downloaded, include_comments=False, include_tables=False, no_fallback=False
+    )
     if not text:
         return None
 
@@ -643,19 +870,19 @@ def _fetch_blog_post(item: dict) -> dict | None:
         return None
 
     return {
-        "doc_id":              _make_doc_id(f"blog:{url}"),
-        "source_type":         "blog",
-        "source_repo":         "databricks.com/blog",
-        "repo_name":           "databricks-blog",
-        "title":               title,
-        "description":         title,
-        "topics":              "",
-        "language":            "",
-        "stars":               0,
-        "content_text":        text[:50_000],
-        "word_count":          wc,
-        "url":                 url,
-        "last_updated":        pub_date,
+        "doc_id": _make_doc_id(f"blog:{url}"),
+        "source_type": "blog",
+        "source_repo": "databricks.com/blog",
+        "repo_name": "databricks-blog",
+        "title": title,
+        "description": title,
+        "topics": "",
+        "language": "",
+        "stars": 0,
+        "content_text": text[:50_000],
+        "word_count": wc,
+        "url": url,
+        "last_updated": pub_date,
         "ingestion_timestamp": _NOW,
     }
 
@@ -664,7 +891,7 @@ logger.info("=== Section 3: Databricks Blog ===")
 
 # Collect + deduplicate feed items
 all_items: list[dict] = []
-seen_links: set[str]  = set()
+seen_links: set[str] = set()
 for feed_url in _BLOG_RSS_FEEDS:
     for item in _parse_rss(feed_url):
         if item["link"] not in seen_links:
@@ -672,8 +899,7 @@ for feed_url in _BLOG_RSS_FEEDS:
             all_items.append(item)
 
 logger.info(
-    f"  {len(all_items)} unique RSS items collected"
-    f" across {len(_BLOG_RSS_FEEDS)} feeds"
+    f"  {len(all_items)} unique RSS items collected across {len(_BLOG_RSS_FEEDS)} feeds"
 )
 
 blog_docs: list[dict] = []
@@ -688,8 +914,7 @@ with ThreadPoolExecutor(max_workers=_BLOG_MAX_WORKERS) as exe:
             logger.debug(f"  Blog fetch error {futures[future]}: {exc}")
 
 logger.info(
-    f"Section 3 complete: {len(blog_docs)} blog posts"
-    f" (from {len(all_items)} candidates)"
+    f"Section 3 complete: {len(blog_docs)} blog posts (from {len(all_items)} candidates)"
 )
 
 # COMMAND ----------
@@ -709,8 +934,7 @@ new_df = spark.createDataFrame(all_docs, schema=KB_SCHEMA)
 if not spark.catalog.tableExists(FULL_TABLE):
     logger.info(f"Creating table {FULL_TABLE}")
     (
-        new_df.write
-        .format("delta")
+        new_df.write.format("delta")
         .mode("overwrite")
         .option("mergeSchema", "true")
         .saveAsTable(FULL_TABLE)
