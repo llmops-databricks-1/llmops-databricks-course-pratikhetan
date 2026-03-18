@@ -329,16 +329,14 @@ estimate_provisioned_cost(50, 8, 30)
 # COMMAND ----------
 
 # Uncomment to delete the endpoint
-"""
-def delete_endpoint(endpoint_name: str):
-    try:
-        w.serving_endpoints.delete(endpoint_name)
-        logger.info(f"Endpoint '{endpoint_name}' deleted successfully")
-    except Exception as e:
-        logger.error(f"Error deleting endpoint: {e}")
-
+# def delete_endpoint(endpoint_name: str):
+#     try:
+#         w.serving_endpoints.delete(endpoint_name)
+#         logger.info(f"Endpoint '{endpoint_name}' deleted successfully")
+#     except Exception as e:
+#         logger.error(f"Error deleting endpoint: {e}")
+#
 # delete_endpoint(ENDPOINT_NAME)
-"""
 
 logger.info("Remember to delete your provisioned endpoint when done!")
 logger.info("Uncomment the code above to delete the endpoint.")
