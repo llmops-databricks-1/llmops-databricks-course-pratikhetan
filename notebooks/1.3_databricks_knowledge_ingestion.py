@@ -334,34 +334,97 @@ _DATABRICKS_DOCS_URLS = [
         "https://docs.databricks.com/en/mlflow/index.html",
     ),
     # --- Delta Lake ---
-    ("Databricks Delta Lake Introduction", "https://docs.databricks.com/en/delta/index.html"),
-    ("Databricks Delta Lake Best Practices", "https://docs.databricks.com/en/delta/best-practices.html"),
-    ("Databricks Delta Live Tables", "https://docs.databricks.com/en/delta-live-tables/index.html"),
-    ("Databricks Delta Live Tables Pipeline", "https://docs.databricks.com/en/delta-live-tables/tutorial-pipelines.html"),
+    (
+        "Databricks Delta Lake Introduction",
+        "https://docs.databricks.com/en/delta/index.html",
+    ),
+    (
+        "Databricks Delta Lake Best Practices",
+        "https://docs.databricks.com/en/delta/best-practices.html",
+    ),
+    (
+        "Databricks Delta Live Tables",
+        "https://docs.databricks.com/en/delta-live-tables/index.html",
+    ),
+    (
+        "Databricks Delta Live Tables Pipeline",
+        "https://docs.databricks.com/en/delta-live-tables/tutorial-pipelines.html",
+    ),
     # --- Machine Learning ---
-    ("Databricks Machine Learning", "https://docs.databricks.com/en/machine-learning/index.html"),
-    ("Databricks Feature Store", "https://docs.databricks.com/en/machine-learning/feature-store/index.html"),
-    ("Databricks AutoML", "https://docs.databricks.com/en/machine-learning/automl/index.html"),
-    ("Databricks Model Serving", "https://docs.databricks.com/en/machine-learning/model-serving/index.html"),
-    ("Databricks Vector Search", "https://docs.databricks.com/en/generative-ai/vector-search.html"),
-    ("Databricks AI Playground", "https://docs.databricks.com/en/large-language-models/ai-playground.html"),
-    ("Databricks Foundation Models", "https://docs.databricks.com/en/machine-learning/foundation-models/index.html"),
-    ("Databricks RAG", "https://docs.databricks.com/en/generative-ai/retrieval-augmented-generation.html"),
-    ("Databricks Agent Framework", "https://docs.databricks.com/en/generative-ai/agent-framework/index.html"),
+    (
+        "Databricks Machine Learning",
+        "https://docs.databricks.com/en/machine-learning/index.html",
+    ),
+    (
+        "Databricks Feature Store",
+        "https://docs.databricks.com/en/machine-learning/feature-store/index.html",
+    ),
+    (
+        "Databricks AutoML",
+        "https://docs.databricks.com/en/machine-learning/automl/index.html",
+    ),
+    (
+        "Databricks Model Serving",
+        "https://docs.databricks.com/en/machine-learning/model-serving/index.html",
+    ),
+    (
+        "Databricks Vector Search",
+        "https://docs.databricks.com/en/generative-ai/vector-search.html",
+    ),
+    (
+        "Databricks AI Playground",
+        "https://docs.databricks.com/en/large-language-models/ai-playground.html",
+    ),
+    (
+        "Databricks Foundation Models",
+        "https://docs.databricks.com/en/machine-learning/foundation-models/index.html",
+    ),
+    (
+        "Databricks RAG",
+        "https://docs.databricks.com/en/generative-ai/retrieval-augmented-generation.html",
+    ),
+    (
+        "Databricks Agent Framework",
+        "https://docs.databricks.com/en/generative-ai/agent-framework/index.html",
+    ),
     # --- Data Engineering ---
-    ("Databricks Data Engineering", "https://docs.databricks.com/en/data-engineering/index.html"),
+    (
+        "Databricks Data Engineering",
+        "https://docs.databricks.com/en/data-engineering/index.html",
+    ),
     ("Databricks Workflows", "https://docs.databricks.com/en/workflows/index.html"),
     ("Databricks Jobs", "https://docs.databricks.com/en/workflows/jobs/index.html"),
-    ("Databricks Structured Streaming", "https://docs.databricks.com/en/structured-streaming/index.html"),
-    ("Databricks Auto Loader", "https://docs.databricks.com/en/ingestion/cloud-object-storage/auto-loader/index.html"),
+    (
+        "Databricks Structured Streaming",
+        "https://docs.databricks.com/en/structured-streaming/index.html",
+    ),
+    (
+        "Databricks Auto Loader",
+        "https://docs.databricks.com/en/ingestion/cloud-object-storage/auto-loader/index.html",
+    ),
     # --- Unity Catalog & Governance ---
-    ("Databricks Unity Catalog", "https://docs.databricks.com/en/data-governance/unity-catalog/index.html"),
-    ("Databricks Unity Catalog Best Practices", "https://docs.databricks.com/en/data-governance/unity-catalog/best-practices.html"),
-    ("Databricks Data Lineage", "https://docs.databricks.com/en/data-governance/unity-catalog/data-lineage.html"),
+    (
+        "Databricks Unity Catalog",
+        "https://docs.databricks.com/en/data-governance/unity-catalog/index.html",
+    ),
+    (
+        "Databricks Unity Catalog Best Practices",
+        "https://docs.databricks.com/en/data-governance/unity-catalog/best-practices.html",
+    ),
+    (
+        "Databricks Data Lineage",
+        "https://docs.databricks.com/en/data-governance/unity-catalog/data-lineage.html",
+    ),
     # --- Compute & SQL ---
     ("Databricks Photon", "https://docs.databricks.com/en/compute/photon.html"),
-    ("Databricks Serverless Compute", "https://docs.databricks.com/en/compute/serverless/index.html"),
-    ("Databricks SQL Warehouse", "https://docs.databricks.com/en/compute/sql-warehouse/index.html"),
+    (
+        "Databricks Serverless Compute",
+        "https://docs.databricks.com/en/compute/serverless/index.html",
+    ),
+    (
+        "Databricks SQL Warehouse",
+        "https://docs.databricks.com/en/compute/sql-warehouse/index.html",
+    ),
 ]
 
 # Apache Spark docs  (spark.apache.org) — server-rendered HTML, trafilatura works well
@@ -472,9 +535,9 @@ _MLFLOW_URLS = [
 ]
 
 _DIRECT_URL_SOURCES = [
-    ("delta-io/delta",  _DELTA_URLS,           "oss_docs"),
-    ("apache/spark",    _SPARK_URLS,           "oss_docs"),
-    ("mlflow/mlflow",   _MLFLOW_URLS,          "oss_docs"),
+    ("delta-io/delta", _DELTA_URLS, "oss_docs"),
+    ("apache/spark", _SPARK_URLS, "oss_docs"),
+    ("mlflow/mlflow", _MLFLOW_URLS, "oss_docs"),
     ("databricks/docs", _DATABRICKS_DOCS_URLS, "oss_docs"),
 ]
 
