@@ -6,35 +6,34 @@ Builds a unified knowledge base across three source types, all written to
 `{catalog}.{schema}.databricks_knowledge_base`:
 
   Section 1 — Solution Accelerators
-      193 public repos from `databricks-industry-solutions` GitHub org.
-      Filters: active, stars >= 2, updated within 3 years, word_count >= 150.
+      Public repos from `databricks-industry-solutions` GitHub org.
+      Filters: active, not archived/fork, updated within 4 years, word_count >= 100.
       source_type = "accelerator"
 
   Section 2 — Open-Source Docs
-      Architecture-relevant docs from four GitHub repos:
+      Architecture-relevant docs from GitHub repos and public doc sites:
         • mlflow/mlflow           → tracking, model registry, serving, tracing, LLMs
         • delta-io/delta          → best practices, streaming, optimisations
         • databricks/databricks-sdk-py → jobs, clusters, model serving, vector search
         • apache/spark            → structured streaming, SQL tuning, cluster design
-      Path-whitelist filtered; stubs (< 200 words) and giant API refs
-      (> 15k words) excluded.
+        • docs.databricks.com     → performance tuning, architecture, MLflow
       source_type = "oss_docs"
 
-  Section 3 — Databricks Blog architecture posts
-      Fetched via RSS feeds, filtered by title keywords + recency (< 3 years),
-      full text extracted with trafilatura.
-      source_type = "blog"
+  Section 3 — Databricks Reference Architectures
+      NOTE: databricks.com/resources/architectures/* pages are React-rendered
+      SPAs and cannot be extracted by trafilatura.  Architecture knowledge comes
+      instead from Solution Accelerators (Section 1) and the Databricks docs
+      pages that do render as static HTML (Section 2).
+      source_type = "architecture" (reserved for future use)
 """
 
 import hashlib
 import time
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 
 import requests
 import trafilatura
-from delta.tables import DeltaTable
 from loguru import logger
 from pyspark.sql import SparkSession
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
@@ -149,6 +148,24 @@ KB_SCHEMA = StructType(
 _NOW = datetime.now(UTC).isoformat()
 
 
+def _load_existing_doc_ids() -> set[str]:
+    """Return doc_ids already in the table. Empty set on first run."""
+    if not spark.catalog.tableExists(FULL_TABLE):
+        return set()
+    ids = {r["doc_id"] for r in spark.table(FULL_TABLE).select("doc_id").collect()}
+    logger.info(f"  Loaded {len(ids):,} existing doc_ids (incremental skip)")
+    return ids
+
+
+EXISTING_DOC_IDS: set[str] = _load_existing_doc_ids()
+
+# COMMAND ----------
+# -- Optional: full refresh ---------------------------------------------------
+# Uncomment and run this cell ALONE to wipe the table and re-ingest everything.
+spark.sql(f"TRUNCATE TABLE {FULL_TABLE}")
+EXISTING_DOC_IDS.clear()
+logger.info("Table truncated — next run will re-ingest all documents")
+
 # COMMAND ----------
 # =============================================================================
 # SECTION 1 — Solution Accelerators (databricks-industry-solutions)
@@ -157,7 +174,6 @@ _NOW = datetime.now(UTC).isoformat()
 GH_ORG = "databricks-industry-solutions"
 
 # Quality filters
-_ACC_MIN_STARS = 0
 _ACC_MIN_WORDS = 100
 _ACC_MAX_AGE_YRS = 4
 
@@ -240,13 +256,13 @@ with ThreadPoolExecutor(max_workers=10) as exe:
     for future in as_completed(futures):
         try:
             result = future.result()
-            if result:
+            if result and result["doc_id"] not in EXISTING_DOC_IDS:
                 acc_docs.append(result)
         except Exception as exc:
             logger.warning(f"  Accelerator error {futures[future]}: {exc}")
 
 logger.info(
-    f"Section 1 complete: {len(acc_docs)} accelerators (filtered from {len(raw_repos)})"
+    f"Section 1 complete: {len(acc_docs)} new accelerators (scanned {len(raw_repos)} repos)"
 )
 
 # COMMAND ----------
@@ -295,29 +311,14 @@ _DELTA_URLS = [
     ),
 ]
 
-# Databricks public docs — architecture & optimization
+# Databricks public docs — candidates for static HTML extraction.
+# Pages that are fully React-rendered return None from trafilatura and are
+# logged as ✗ warnings; they do not cause errors.
 _DATABRICKS_DOCS_URLS = [
-    (
-        "Databricks Performance Tuning",
-        "https://docs.databricks.com/en/optimizations/performance-tuning.html",
-    ),
-    (
-        "Databricks Cluster Sizing",
-        "https://docs.databricks.com/en/clusters/cluster-sizing.html",
-    ),
-    (
-        "Databricks SQL Optimization",
-        "https://docs.databricks.com/en/sql/performance.html",
-    ),
+    # --- Confirmed working (from previous run) ---
     (
         "Databricks Delta Lake Optimization",
         "https://docs.databricks.com/en/delta/optimizations.html",
-    ),
-    ("Databricks Best Practices", "https://docs.databricks.com/en/best-practices.html"),
-    ("Databricks Monitoring", "https://docs.databricks.com/en/monitoring/index.html"),
-    (
-        "Databricks Architecture Overview",
-        "https://docs.databricks.com/en/architecture/index.html",
     ),
     (
         "Databricks Security Architecture",
@@ -331,6 +332,35 @@ _DATABRICKS_DOCS_URLS = [
         "Databricks MLflow Architecture",
         "https://docs.databricks.com/en/mlflow/index.html",
     ),
+    # --- Delta Lake ---
+    ("Databricks Delta Lake Introduction", "https://docs.databricks.com/en/delta/index.html"),
+    ("Databricks Delta Lake Best Practices", "https://docs.databricks.com/en/delta/best-practices.html"),
+    ("Databricks Delta Live Tables", "https://docs.databricks.com/en/delta-live-tables/index.html"),
+    ("Databricks Delta Live Tables Pipeline", "https://docs.databricks.com/en/delta-live-tables/tutorial-pipelines.html"),
+    # --- Machine Learning ---
+    ("Databricks Machine Learning", "https://docs.databricks.com/en/machine-learning/index.html"),
+    ("Databricks Feature Store", "https://docs.databricks.com/en/machine-learning/feature-store/index.html"),
+    ("Databricks AutoML", "https://docs.databricks.com/en/machine-learning/automl/index.html"),
+    ("Databricks Model Serving", "https://docs.databricks.com/en/machine-learning/model-serving/index.html"),
+    ("Databricks Vector Search", "https://docs.databricks.com/en/generative-ai/vector-search.html"),
+    ("Databricks AI Playground", "https://docs.databricks.com/en/large-language-models/ai-playground.html"),
+    ("Databricks Foundation Models", "https://docs.databricks.com/en/machine-learning/foundation-models/index.html"),
+    ("Databricks RAG", "https://docs.databricks.com/en/generative-ai/retrieval-augmented-generation.html"),
+    ("Databricks Agent Framework", "https://docs.databricks.com/en/generative-ai/agent-framework/index.html"),
+    # --- Data Engineering ---
+    ("Databricks Data Engineering", "https://docs.databricks.com/en/data-engineering/index.html"),
+    ("Databricks Workflows", "https://docs.databricks.com/en/workflows/index.html"),
+    ("Databricks Jobs", "https://docs.databricks.com/en/workflows/jobs/index.html"),
+    ("Databricks Structured Streaming", "https://docs.databricks.com/en/structured-streaming/index.html"),
+    ("Databricks Auto Loader", "https://docs.databricks.com/en/ingestion/cloud-object-storage/auto-loader/index.html"),
+    # --- Unity Catalog & Governance ---
+    ("Databricks Unity Catalog", "https://docs.databricks.com/en/data-governance/unity-catalog/index.html"),
+    ("Databricks Unity Catalog Best Practices", "https://docs.databricks.com/en/data-governance/unity-catalog/best-practices.html"),
+    ("Databricks Data Lineage", "https://docs.databricks.com/en/data-governance/unity-catalog/data-lineage.html"),
+    # --- Compute & SQL ---
+    ("Databricks Photon", "https://docs.databricks.com/en/compute/photon.html"),
+    ("Databricks Serverless Compute", "https://docs.databricks.com/en/compute/serverless/index.html"),
+    ("Databricks SQL Warehouse", "https://docs.databricks.com/en/compute/sql-warehouse/index.html"),
 ]
 
 # Apache Spark docs  (spark.apache.org) — server-rendered HTML, trafilatura works well
@@ -441,10 +471,10 @@ _MLFLOW_URLS = [
 ]
 
 _DIRECT_URL_SOURCES = [
-    ("delta-io/delta", _DELTA_URLS),
-    ("apache/spark", _SPARK_URLS),
-    ("mlflow/mlflow", _MLFLOW_URLS),
-    ("databricks/docs", _DATABRICKS_DOCS_URLS),
+    ("delta-io/delta",  _DELTA_URLS,           "oss_docs"),
+    ("apache/spark",    _SPARK_URLS,           "oss_docs"),
+    ("mlflow/mlflow",   _MLFLOW_URLS,          "oss_docs"),
+    ("databricks/docs", _DATABRICKS_DOCS_URLS, "oss_docs"),
 ]
 
 _OSS_MIN_WORDS = 100
@@ -462,7 +492,9 @@ _BROWSER_HEADERS = {
 }
 
 
-def _fetch_url_doc(title: str, url: str, source_repo: str) -> dict | None:
+def _fetch_url_doc(
+    title: str, url: str, source_repo: str, source_type: str = "oss_docs"
+) -> dict | None:
     """Fetch a single doc page and return a knowledge base record.
 
     Tries trafilatura first (fast path), then falls back to requests with
@@ -495,7 +527,7 @@ def _fetch_url_doc(title: str, url: str, source_repo: str) -> dict | None:
         return None
     return {
         "doc_id": _make_doc_id(f"oss:{url}"),
-        "source_type": "oss_docs",
+        "source_type": source_type,
         "source_repo": source_repo,
         "repo_name": source_repo.split("/")[-1],
         "title": title,
@@ -596,6 +628,93 @@ _GH_SOURCES: dict[str, dict] = {
             "tables",
         ],
         "exts": {".rst", ".md"},
+    },
+    # GenAI Cookbook — RAG patterns, agent architecture, chunking, eval
+    "databricks/genai-cookbook": {
+        "branch": "main",
+        "scan_dirs": ["rag_app_sample_code", "agent_app_sample_code", "."],
+        "keywords": [
+            "rag",
+            "agent",
+            "retrieval",
+            "chunk",
+            "embed",
+            "vector",
+            "llm",
+            "prompt",
+            "eval",
+            "chain",
+            "index",
+            "query",
+            "context",
+            "generation",
+            "databricks",
+            "mosaic",
+            "foundation",
+            "serving",
+            "mlflow",
+            "cookbook",
+            "pattern",
+            "best",
+            "practice",
+            "guide",
+        ],
+        "exts": {".md"},
+    },
+    # MLOps Stacks — MLOps reference architecture, CI/CD, project structure
+    "databricks/mlops-stacks": {
+        "branch": "main",
+        "scan_dirs": ["."],
+        "keywords": [
+            "mlops",
+            "deploy",
+            "pipeline",
+            "ci",
+            "cd",
+            "workflow",
+            "model",
+            "registry",
+            "serving",
+            "training",
+            "feature",
+            "monitor",
+            "test",
+            "bundle",
+            "databricks",
+            "architecture",
+            "guide",
+            "readme",
+        ],
+        "exts": {".md"},
+    },
+    # Databricks ML Examples — LLM fine-tuning, inference, RAG, and serving patterns
+    "databricks/databricks-ml-examples": {
+        "branch": "master",
+        "scan_dirs": ["."],
+        "keywords": [
+            "llm",
+            "rag",
+            "fine",
+            "tuning",
+            "inference",
+            "serving",
+            "mlflow",
+            "model",
+            "example",
+            "databricks",
+            "mosaic",
+            "instruct",
+            "chat",
+            "embed",
+            "vector",
+            "retrieval",
+            "prompt",
+            "generation",
+            "deploy",
+            "endpoint",
+            "readme",
+        ],
+        "exts": {".md"},
     },
 }
 
@@ -709,12 +828,15 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
 logger.info("=== Section 2: OSS Docs ===")
 oss_docs: list[dict] = []
 
-# Strategy A — direct URL fetch (Spark + MLflow via trafilatura)
-for source_repo, url_list in _DIRECT_URL_SOURCES:
+# Strategy A — direct URL fetch (Spark, MLflow, Databricks docs, architecture pages)
+for source_repo, url_list, source_type in _DIRECT_URL_SOURCES:
     logger.info(f"  Fetching direct URLs: {source_repo} ({len(url_list)} pages)")
     for title, url in url_list:
+        if _make_doc_id(f"oss:{url}") in EXISTING_DOC_IDS:
+            logger.debug(f"    [skip] {title}")
+            continue
         try:
-            doc = _fetch_url_doc(title, url, source_repo)
+            doc = _fetch_url_doc(title, url, source_repo, source_type)
             if doc:
                 oss_docs.append(doc)
                 logger.info(f"    ✓ {title} ({doc['word_count']} words)")
@@ -724,13 +846,17 @@ for source_repo, url_list in _DIRECT_URL_SOURCES:
             logger.warning(f"    ✗ {title}: {exc}")
         time.sleep(0.5)
 
-# Strategy B — GitHub traversal (Delta Lake + MLflow narrative + SDK)
+# Strategy B — GitHub traversal (MLflow narrative + SDK)
 for repo_name, repo_cfg in _GH_SOURCES.items():
     logger.info(f"  Fetching GitHub docs: {repo_name}")
     try:
         repo_docs = _fetch_gh_docs(repo_name, repo_cfg)
-        oss_docs.extend(repo_docs)
-        logger.info(f"    → {len(repo_docs)} docs from {repo_name}")
+        new_repo_docs = [d for d in repo_docs if d["doc_id"] not in EXISTING_DOC_IDS]
+        oss_docs.extend(new_repo_docs)
+        logger.info(
+            f"    → {len(new_repo_docs)} new docs from {repo_name}"
+            f" ({len(repo_docs) - len(new_repo_docs)} skipped)"
+        )
     except Exception as exc:
         logger.warning(f"    Failed {repo_name}: {exc}")
 
@@ -738,224 +864,33 @@ logger.info(f"Section 2 complete: {len(oss_docs)} OSS docs")
 
 # COMMAND ----------
 # =============================================================================
-# SECTION 3 — Databricks Blog architecture posts (RSS + trafilatura)
+# SECTION 3 — Combine + Write Delta (append-only, incremental)
 # =============================================================================
 
-_BLOG_RSS_FEEDS = [
-    "https://www.databricks.com/feed",
-    "https://www.databricks.com/blog/category/engineering-blog/feed",
-    "https://www.databricks.com/blog/category/product/feed",
-]
-
-_BLOG_KEYWORDS = [
-    "architecture",
-    "design",
-    "pipeline",
-    "lakehouse",
-    "llm",
-    "agent",
-    "rag",
-    "mlops",
-    "deploy",
-    "streaming",
-    "delta",
-    "vector search",
-    "best practice",
-    "reference",
-    "pattern",
-    "workflow",
-    "fine-tun",
-    "inference",
-    "databricks",
-    "mosaic",
-    "unity catalog",
-    "spark",
-    "mlflow",
-    "feature store",
-    "automl",
-    "model serving",
-    "real-time",
-    "batch",
-    "etl",
-    "data engineering",
-    "data science",
-    "foundation model",
-    "embedding",
-    "retrieval",
-    "chatbot",
-    "copilot",
-    "governance",
-    "lineage",
-    "catalog",
-    "lakehouse",
-    "genie",
-    "photon",
-    "serverless",
-    "dlt",
-    "live tables",
-    "medallion",
-    "bronze",
-    "silver",
-    "gold",
-    "data mesh",
-    "platform",
-]
-
-_BLOG_MAX_AGE_DAYS = 3 * 365  # only posts from last 3 years
-_BLOG_MIN_WORDS = 300
-_BLOG_MAX_WORKERS = 5
-_CUTOFF_BLOG = datetime.now(UTC) - timedelta(days=_BLOG_MAX_AGE_DAYS)
-
-
-def _parse_rss(url: str) -> list[dict]:
-    """Fetch and parse an RSS feed, return list of {title, link, pub_date}."""
-    try:
-        resp = requests.get(url, headers={"User-Agent": "llmops-course"}, timeout=15)
-        if resp.status_code != 200:
-            return []
-        root = ET.fromstring(resp.text)
-        items = []
-        for item in root.iter("item"):
-            title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
-            pub_date = (item.findtext("pubDate") or "").strip()
-            if title and link:
-                items.append({"title": title, "link": link, "pub_date": pub_date})
-        return items
-    except Exception as exc:
-        logger.warning(f"  RSS parse failed {url}: {exc}")
-        return []
-
-
-def _parse_pub_date(date_str: str) -> datetime | None:
-    for fmt in ["%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S GMT"]:
-        try:
-            return datetime.strptime(date_str, fmt).replace(tzinfo=UTC)
-        except ValueError:
-            continue
-    return None
-
-
-def _title_matches_keywords(title: str) -> bool:
-    t = title.lower()
-    return any(kw in t for kw in _BLOG_KEYWORDS)
-
-
-def _fetch_blog_post(item: dict) -> dict | None:
-    url = item["link"]
-    title = item["title"]
-    pub_date = item["pub_date"]
-
-    # Recency filter
-    dt = _parse_pub_date(pub_date)
-    if dt and dt < _CUTOFF_BLOG:
-        return None
-
-    # Title keyword filter
-    if not _title_matches_keywords(title):
-        return None
-
-    # Fetch full text
-    downloaded = trafilatura.fetch_url(url)
-    if not downloaded:
-        return None
-    text = trafilatura.extract(
-        downloaded, include_comments=False, include_tables=False, no_fallback=False
-    )
-    if not text:
-        return None
-
-    wc = len(text.split())
-    if wc < _BLOG_MIN_WORDS:
-        return None
-
-    return {
-        "doc_id": _make_doc_id(f"blog:{url}"),
-        "source_type": "blog",
-        "source_repo": "databricks.com/blog",
-        "repo_name": "databricks-blog",
-        "title": title,
-        "description": title,
-        "topics": "",
-        "language": "",
-        "stars": 0,
-        "content_text": text[:50_000],
-        "word_count": wc,
-        "url": url,
-        "last_updated": pub_date,
-        "ingestion_timestamp": _NOW,
-    }
-
-
-logger.info("=== Section 3: Databricks Blog ===")
-
-# Collect + deduplicate feed items
-all_items: list[dict] = []
-seen_links: set[str] = set()
-for feed_url in _BLOG_RSS_FEEDS:
-    for item in _parse_rss(feed_url):
-        if item["link"] not in seen_links:
-            seen_links.add(item["link"])
-            all_items.append(item)
-
+all_docs = acc_docs + oss_docs
 logger.info(
-    f"  {len(all_items)} unique RSS items collected across {len(_BLOG_RSS_FEEDS)} feeds"
+    f"Total new documents: {len(all_docs)} "
+    f"(accelerators={len(acc_docs)}, oss_docs={len(oss_docs)})"
 )
 
-blog_docs: list[dict] = []
-with ThreadPoolExecutor(max_workers=_BLOG_MAX_WORKERS) as exe:
-    futures = {exe.submit(_fetch_blog_post, item): item["link"] for item in all_items}
-    for future in as_completed(futures):
-        try:
-            result = future.result()
-            if result:
-                blog_docs.append(result)
-        except Exception as exc:
-            logger.debug(f"  Blog fetch error {futures[future]}: {exc}")
-
-logger.info(
-    f"Section 3 complete: {len(blog_docs)} blog posts (from {len(all_items)} candidates)"
-)
-
-# COMMAND ----------
-# =============================================================================
-# SECTION 4 — Combine + Write Delta (MERGE, idempotent)
-# =============================================================================
-
-all_docs = acc_docs + oss_docs + blog_docs
-logger.info(
-    f"Total documents: {len(all_docs)} "
-    f"(accelerators={len(acc_docs)}, oss_docs={len(oss_docs)},"
-    f" blog={len(blog_docs)})"
-)
-
-new_df = spark.createDataFrame(all_docs, schema=KB_SCHEMA)
-
-if not spark.catalog.tableExists(FULL_TABLE):
-    logger.info(f"Creating table {FULL_TABLE}")
+if not all_docs:
+    logger.info("Nothing new to write — knowledge base is up to date.")
+else:
+    new_df = spark.createDataFrame(all_docs, schema=KB_SCHEMA)
     (
         new_df.write.format("delta")
-        .mode("overwrite")
+        .mode("append")
         .option("mergeSchema", "true")
         .saveAsTable(FULL_TABLE)
     )
-else:
-    logger.info(f"Merging into {FULL_TABLE}")
-    (
-        DeltaTable.forName(spark, FULL_TABLE)
-        .alias("existing")
-        .merge(new_df.alias("incoming"), "existing.doc_id = incoming.doc_id")
-        .whenMatchedUpdateAll()
-        .whenNotMatchedInsertAll()
-        .execute()
-    )
+    logger.info(f"Appended {len(all_docs)} new docs to {FULL_TABLE}")
 
 total = spark.table(FULL_TABLE).count()
 logger.info(f"Table {FULL_TABLE}: {total} rows total")
 
 # COMMAND ----------
 # =============================================================================
-# SECTION 5 — Summary Stats
+# SECTION 4 — Summary Stats
 # =============================================================================
 
 from pyspark.sql.functions import avg, count  # noqa: E402

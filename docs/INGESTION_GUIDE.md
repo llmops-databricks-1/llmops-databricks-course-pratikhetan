@@ -6,13 +6,12 @@ This document explains how the knowledge base ingestion pipeline works for the D
 
 ## Overview
 
-The pipeline ingests documentation from three main sources into a single Delta table (`mlops_dev.pratikhe.databricks_knowledge_base`):
+The pipeline ingests documentation from three source types into a single Delta table (`{catalog}.{schema}.databricks_knowledge_base`):
 
-1. **Solution Accelerators** — Databricks industry accelerator repos (GitHub)
-2. **OSS Docs** — Delta Lake, Spark, MLflow, Databricks SDK (official docs & GitHub)
-3. **Databricks Blog** — Blog posts via RSS feeds
+1. **Solution Accelerators** — Databricks industry accelerator repos (GitHub), `source_type = "accelerator"`
+2. **OSS Docs** — Delta Lake, Spark, MLflow, Databricks docs (official sites & GitHub repos), `source_type = "oss_docs"`
 
-All data is merged into a single Delta table for RAG and search.
+The pipeline is **incremental (append-only)**: on each run it loads existing `doc_id` values from the table and skips any document already present, so only new documents are fetched and written.
 
 ---
 
@@ -20,73 +19,105 @@ All data is merged into a single Delta table for RAG and search.
 
 ### 1. Solution Accelerators (Section 1)
 - **Source:** All public repos in `databricks-industry-solutions` GitHub org
+- **Filters:** not archived, not a fork, pushed within 4 years, README word count ≥ 100
 - **How:**
-  - List all repos (skip archived/forks)
-  - For each repo, fetch README and docs files
-  - Filter by word count, last update, etc.
-  - Extract text using `trafilatura`
-- **Output:** List of accelerator docs with metadata
+  - List all repos via GitHub API (paginated, 100/page)
+  - For each repo, fetch README (`README.md` / `readme.md` / `Readme.md`, tries `main` then `master`)
+  - Skip if `doc_id` already in table (incremental)
+- **`doc_id` key:** `acc:{repo_name}`
+- **Output:** `source_type = "accelerator"`
 
 ### 2. OSS Docs (Section 2)
-- **Source:**
-  - **Delta Lake:** 12 key pages from https://docs.delta.io/latest/
-  - **Spark:** 16 key pages from https://spark.apache.org/docs/latest/
-  - **MLflow:** 16 Python API pages from https://mlflow.org/docs/latest/python_api/
-  - **Databricks SDK:** Sphinx docs from `databricks/databricks-sdk-py` GitHub repo
-- **How:**
-  - For Delta, Spark, MLflow: fetch each URL, extract text with `trafilatura` (with browser headers fallback)
-  - For SDK: traverse GitHub repo, filter `.md`/`.rst` docs by keywords
-- **Output:** List of OSS docs with metadata
 
-### 3. Databricks Blog (Section 3)
-- **Source:**
-  - RSS feeds from https://www.databricks.com/blog and subcategories
-- **How:**
-  - Parse RSS, fetch each post, extract text with `trafilatura`
-  - Filter by keywords, word count, and recency
-- **Output:** List of blog posts with metadata
+#### Strategy A — Direct URL fetch
+Uses `trafilatura` with a browser-header fallback for sites that block bots.
 
-### 4. Merge and Write to Delta Table (Section 4)
-- **How:**
-  - Combine all docs from above
-  - Compute a unique `doc_id` (MD5 hash)
-  - Merge into Delta table using `MERGE` (idempotent)
+| Source | Pages | Notes |
+|---|---|---|
+| Delta Lake | 12 pages | `docs.delta.io` — Sphinx HTML |
+| Apache Spark | 16 pages | `spark.apache.org` — server-rendered |
+| MLflow | 16 Python API pages | `mlflow.org/docs/latest/python_api/` — static Sphinx |
+| Databricks Docs | 28 pages | `docs.databricks.com` — Delta, ML, data engineering, Unity Catalog, compute |
+
+- **`doc_id` key:** `oss:{url}`
+- **Output:** `source_type = "oss_docs"`
+
+#### Strategy B — GitHub traversal
+Traverses GitHub repos for narrative Markdown/RST docs, filtered by filename keywords.
+
+| Repo | Branch | Scan dirs | Focus |
+|---|---|---|---|
+| `mlflow/mlflow` | `master` | `docs/`, `docs/source/` | Tracking, registry, serving, LLM integrations |
+| `databricks/databricks-sdk-py` | `main` | `docs/` | Jobs, clusters, model serving, vector search |
+| `databricks/genai-cookbook` | `main` | `rag_app_sample_code/`, `agent_app_sample_code/`, `.` | RAG patterns, agent architecture, chunking, eval |
+| `databricks/mlops-stacks` | `main` | `.` | MLOps reference architecture, CI/CD, project structure |
+| `databricks/databricks-ml-examples` | `master` | `.` | LLM fine-tuning, inference, RAG, and serving patterns |
+
+- **`doc_id` key:** `oss:{repo}:{path}`
+- **Output:** `source_type = "oss_docs"`
+
+### 3. Write to Delta Table (Section 3)
+- Combines `acc_docs + oss_docs`
+- If nothing new: logs "up to date" and skips write
+- If new docs exist: appends to Delta table with `.mode("append")`
+
+---
+
+## Incremental Logic
+
+```
+Run 1 (first time): table doesn't exist → EXISTING_DOC_IDS = {} → fetch all → append all
+Run 2+:             load doc_ids from table → skip existing → fetch only new → append new
+```
+
+`doc_id` is a deterministic MD5 hash of a stable key (URL or repo+path), so the same document always produces the same `doc_id` across runs.
+
+---
+
+## Full Refresh
+
+To wipe the table and re-ingest everything:
+
+1. Open the notebook in Databricks
+2. Find the **"Optional: full refresh"** cell
+3. Uncomment both lines and run that cell alone:
+   ```python
+   spark.sql(f"TRUNCATE TABLE {FULL_TABLE}")
+   EXISTING_DOC_IDS.clear()
+   ```
+4. Then run the rest of the notebook normally
 
 ---
 
 ## How to Run the Pipeline
 
-1. Open `notebooks/1.3_databricks_knowledge_ingestion.py` in Databricks or VS Code
-2. Run all cells (or run as a Databricks job)
+1. Open `notebooks/1.3_databricks_knowledge_ingestion.py` in Databricks
+2. Run all cells (or run as a Databricks job via `resources/`)
 3. Monitor logs for counts and extraction status
-4. Inspect the output table: `mlops_dev.pratikhe.databricks_knowledge_base`
+4. Inspect the output table: `{catalog}.{schema}.databricks_knowledge_base`
 
 ---
 
 ## Extending the Pipeline
 
-- **Add new sources:**
-  - For new direct URLs, add to the relevant URL list
-  - For new GitHub repos, add to `_GH_SOURCES` with scan dirs/keywords
-- **Adjust filters:**
-  - Change min/max word count, keywords, or date filters as needed
-- **Debug extraction:**
-  - Use logs to see which docs fail extraction and why
-  - Update `_fetch_url_doc` for new site patterns if needed
+- **Add new direct URLs:** append to the relevant list (`_DELTA_URLS`, `_SPARK_URLS`, `_DATABRICKS_DOCS_URLS`, etc.) as `(title, url)` tuples
+- **Add new GitHub repos:** add an entry to `_GH_SOURCES` with `branch`, `scan_dirs`, `keywords`, and `exts`
+- **Adjust filters:** change `_ACC_MIN_WORDS`, `_ACC_MAX_AGE_YRS`, `_OSS_MIN_WORDS`, `_OSS_MAX_WORDS` as needed
+- **Debug extraction failures:** check logs for `✗` lines; sites that are JS-rendered will return `None` from trafilatura
 
 ---
 
 ## Key Files
 - `notebooks/1.3_databricks_knowledge_ingestion.py` — Main pipeline notebook
-- `resources/databricks_knowledge_ingestion_job.yml` — Databricks job definition
-- `project_config.yml` — Table/volume config
+- `resources/arxiv_data_ingestion_job.yml` — Example Databricks job definition
+- `project_config.yml` — Catalog/schema config
 
 ---
 
 ## Troubleshooting
-- If a doc fails extraction, check if the site is JavaScript-rendered or blocks bots
-- For GitHub traversal, ensure correct branch and scan_dirs
-- Use browser headers and `favor_recall=True` for stubborn sites
+- **Doc returns `✗`:** site may be JavaScript-rendered or blocking bots — try adding it to `_DATABRICKS_DOCS_URLS` with browser headers fallback already built in
+- **GitHub traversal returns 0 docs:** check `branch` and `scan_dirs` are correct; branches tried in order: configured → `master` → `main`
+- **Rate limit warnings:** add a GitHub token via `dbutils.secrets` (scope `llmops_course`, key `github_token`) to raise limit from 60 to 5,000 req/hr
 
 ---
 
