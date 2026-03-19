@@ -262,7 +262,8 @@ with ThreadPoolExecutor(max_workers=10) as exe:
             logger.warning(f"  Accelerator error {futures[future]}: {exc}")
 
 logger.info(
-    f"Section 1 complete: {len(acc_docs)} new accelerators (scanned {len(raw_repos)} repos)"
+    f"Section 1 complete: {len(acc_docs)} new accelerators"
+    f" (scanned {len(raw_repos)} repos)"
 )
 
 # COMMAND ----------
