@@ -75,14 +75,18 @@ from loguru import logger
 
 # COMMAND ----------
 
+
 # Example: Token estimation
 def estimate_tokens(text: str) -> int:
     """Rough estimation: ~4 characters per token."""
     return len(text) // 4
 
+
 # Example texts
 short_text = "Hello, world!"
-long_text = "This is a much longer piece of text that would be used in a real application. " * 100
+long_text = (
+    "This is a much longer piece of text that would be used in a real application. " * 100
+)
 
 logger.info(f"Short text: {estimate_tokens(short_text)} tokens")
 logger.info(f"Long text: {estimate_tokens(long_text)} tokens")
@@ -93,7 +97,9 @@ system_prompt_tokens = 200
 user_query_tokens = 100
 max_output_tokens = 2000
 
-available_for_context = context_window - system_prompt_tokens - user_query_tokens - max_output_tokens
+available_for_context = (
+    context_window - system_prompt_tokens - user_query_tokens - max_output_tokens
+)
 logger.info(f"\nAvailable tokens for context: {available_for_context:,}")
 logger.info(f"Approximate words: {available_for_context * 0.75:,.0f}")
 
@@ -140,8 +146,8 @@ logger.info(f"Approximate words: {available_for_context * 0.75:,.0f}")
 # COMMAND ----------
 
 # Example: Query rewriting for better retrieval
-from openai import OpenAI
 from databricks.sdk import WorkspaceClient
+from openai import OpenAI
 
 w = WorkspaceClient()
 
@@ -149,18 +155,16 @@ w = WorkspaceClient()
 host = w.config.host
 token = w.tokens.create(lifetime_seconds=1200).token_value
 
-client = OpenAI(
-    api_key=token,
-    base_url=f"{host.rstrip('/')}/serving-endpoints"
-)
+client = OpenAI(api_key=token, base_url=f"{host.rstrip('/')}/serving-endpoints")
 
 # Use an available model from your workspace
 MODEL_NAME = "databricks-llama-4-maverick"  # Change to match your available models
 logger.info(f"Using model: {MODEL_NAME}")
 
+
 def rewrite_query(original_query: str) -> list[str]:
     """Generate query variations for better retrieval."""
-    
+
     prompt = f"""Given this search query, generate 3 alternative phrasings that would help retrieve relevant information:
 
 Original query: {original_query}
@@ -176,11 +180,12 @@ Return only the 3 variations, one per line."""
         model=MODEL_NAME,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=200,
-        temperature=0.7
+        temperature=0.7,
     )
-    
-    variations = response.choices[0].message.content.strip().split('\n')
+
+    variations = response.choices[0].message.content.strip().split("\n")
     return [v.strip() for v in variations if v.strip()]
+
 
 # Example
 original = "How do I deploy a model in Databricks?"
@@ -210,30 +215,32 @@ for i, var in enumerate(variations, 1):
 
 # COMMAND ----------
 
+
 # Example: Context ordering strategies
 def order_context_by_relevance(chunks: list[dict]) -> list[dict]:
     """Order chunks to avoid 'lost in the middle' problem.
-    
+
     Strategy: Most relevant at start, second-most at end, rest in middle.
     """
     if len(chunks) <= 2:
         return chunks
-    
+
     # Assume chunks are already sorted by relevance score
     ordered = []
-    
+
     # Most relevant at start
     ordered.append(chunks[0])
-    
+
     # Least relevant in middle
     if len(chunks) > 2:
         ordered.extend(chunks[2:-1])
-    
+
     # Second most relevant at end
     if len(chunks) > 1:
         ordered.append(chunks[1])
-    
+
     return ordered
+
 
 # Example chunks (with mock relevance scores)
 chunks = [
@@ -268,9 +275,10 @@ for i, chunk in enumerate(ordered, 1):
 
 # COMMAND ----------
 
+
 def summarize_chunk(text: str, max_length: int = 100) -> str:
     """Summarize a text chunk using LLM."""
-    
+
     prompt = f"""Summarize the following text in {max_length} words or less, preserving key information:
 
 {text}
@@ -281,20 +289,21 @@ Summary:"""
         model=MODEL_NAME,
         messages=[{"role": "user", "content": prompt}],
         max_tokens=max_length * 2,  # Rough token estimate
-        temperature=0.3
+        temperature=0.3,
     )
-    
+
     return response.choices[0].message.content.strip()
+
 
 # Example
 long_text = """
-Databricks is a unified analytics platform that combines data engineering, 
-data science, and machine learning. It provides a collaborative environment 
-for data teams to work together on big data and AI projects. The platform 
-is built on top of Apache Spark and offers features like Delta Lake for 
-reliable data lakes, MLflow for machine learning lifecycle management, 
-and Unity Catalog for unified governance. Databricks supports multiple 
-programming languages including Python, SQL, R, and Scala, making it 
+Databricks is a unified analytics platform that combines data engineering,
+data science, and machine learning. It provides a collaborative environment
+for data teams to work together on big data and AI projects. The platform
+is built on top of Apache Spark and offers features like Delta Lake for
+reliable data lakes, MLflow for machine learning lifecycle management,
+and Unity Catalog for unified governance. Databricks supports multiple
+programming languages including Python, SQL, R, and Scala, making it
 accessible to various types of data professionals.
 """
 
@@ -342,12 +351,13 @@ example_document = {
         "department": "engineering",
         "language": "en",
         "tags": ["databricks", "mlops", "deployment"],
-        "access_level": "internal"
-    }
+        "access_level": "internal",
+    },
 }
 
 logger.info("Example document with metadata:")
 import json
+
 logger.info(json.dumps(example_document, indent=2))
 
 # COMMAND ----------
@@ -358,8 +368,8 @@ logger.info(json.dumps(example_document, indent=2))
 # MAGIC ### Effective RAG Prompts
 # MAGIC
 # MAGIC ```
-# MAGIC System: You are a helpful assistant. Use the provided context 
-# MAGIC to answer questions. If the answer is not in the context, 
+# MAGIC System: You are a helpful assistant. Use the provided context
+# MAGIC to answer questions. If the answer is not in the context,
 # MAGIC say "I don't have enough information to answer that."
 # MAGIC
 # MAGIC Context:
@@ -372,14 +382,14 @@ logger.info(json.dumps(example_document, indent=2))
 
 # COMMAND ----------
 
+
 def create_rag_prompt(query: str, context_chunks: list[str]) -> str:
     """Create a RAG prompt with context."""
-    
-    context = "\n\n".join([
-        f"[Document {i+1}]\n{chunk}" 
-        for i, chunk in enumerate(context_chunks)
-    ])
-    
+
+    context = "\n\n".join(
+        [f"[Document {i + 1}]\n{chunk}" for i, chunk in enumerate(context_chunks)]
+    )
+
     prompt = f"""Use the following context to answer the question. If the answer is not in the context, say "I don't have enough information to answer that."
 
 Context:
@@ -388,8 +398,9 @@ Context:
 Question: {query}
 
 Answer:"""
-    
+
     return prompt
+
 
 # Example
 query = "What is Databricks?"
@@ -437,4 +448,3 @@ logger.info(prompt)
 # MAGIC 3. Ignore the "lost in the middle" problem
 # MAGIC 4. Forget to cite sources
 # MAGIC 5. Assume all retrieved docs are relevant
-

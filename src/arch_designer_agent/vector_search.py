@@ -117,7 +117,7 @@ class VectorSearchManager:
 
     def _wait_for_index_online(
         self,
-        index,
+        index: object,
         timeout_seconds: int = 600,
         poll_interval_seconds: int = 20,
     ) -> None:
@@ -137,15 +137,11 @@ class VectorSearchManager:
             # SDK may return a dict or a typed object depending on version
             if isinstance(desc, dict):
                 status = desc.get("status", {})
-                state = (
-                    status.get("detailed_state", "")
-                    or status.get("ready_state", "")
-                )
+                state = status.get("detailed_state", "") or status.get("ready_state", "")
             else:
                 status_obj = getattr(desc, "status", None)
-                state = (
-                    getattr(status_obj, "detailed_state", "")
-                    or getattr(status_obj, "ready_state", "")
+                state = getattr(status_obj, "detailed_state", "") or getattr(
+                    status_obj, "ready_state", ""
                 )
 
             state_str = str(state).upper()

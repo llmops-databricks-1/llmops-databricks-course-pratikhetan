@@ -154,7 +154,7 @@ vs_manager.create_endpoint_if_not_exists()
 
 index = vs_manager.create_or_get_index()
 
-logger.info(f"\n✓ Vector search setup complete!")
+logger.info("\n✓ Vector search setup complete!")
 logger.info(f"  Index  : {vs_manager.index_name}")
 logger.info(f"  Source : {CHUNKS_TABLE}")
 logger.info(f"  Embedding Model: {vs_manager.embedding_model}")
@@ -194,10 +194,7 @@ def parse_vector_search_results(results: dict) -> list[dict]:
     columns = [col["name"] for col in results.get("manifest", {}).get("columns", [])]
     data_array = results.get("result", {}).get("data_array", [])
 
-    return [
-        dict(zip(columns, row_data, strict=False))
-        for row_data in data_array
-    ]
+    return [dict(zip(columns, row_data, strict=False)) for row_data in data_array]
 
 
 # COMMAND ----------

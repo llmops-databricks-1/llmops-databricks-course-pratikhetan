@@ -46,7 +46,7 @@ KB_CHUNKS_SCHEMA = StructType(
 )
 
 # Splitter config — tuned for databricks-gte-large-en (512-token limit)
-_CHUNK_SIZE = 1500   # characters ≈ 375 tokens
+_CHUNK_SIZE = 1500  # characters ≈ 375 tokens
 _CHUNK_OVERLAP = 150  # 10 % overlap for context continuity
 
 _MD_HEADERS = [
@@ -194,26 +194,20 @@ class KBProcessor:
     def _make_chunk_id(doc_id: str, index: int) -> str:
         return hashlib.md5(f"{doc_id}:chunk:{index}".encode()).hexdigest()
 
-    def _chunk_doc(
-        self, doc_id: str, content: str
-    ) -> list[tuple[str, str, str, str]]:
+    def _chunk_doc(self, doc_id: str, content: str) -> list[tuple[str, str, str, str]]:
         """Two-stage chunk a single document.
 
         Returns list of (chunk_id, text, section_header, doc_id).
         """
         results: list[tuple[str, str, str, str]] = []
-        has_headers = any(
-            line.startswith("#") for line in content.splitlines()[:50]
-        )
+        has_headers = any(line.startswith("#") for line in content.splitlines()[:50])
 
         if has_headers:
             md_docs = self._md_splitter.split_text(content)
             sub_docs = self._char_splitter.split_documents(md_docs)
             for i, d in enumerate(sub_docs):
                 header = " > ".join(
-                    v
-                    for k in ("h1", "h2", "h3", "h4")
-                    if (v := d.metadata.get(k))
+                    v for k in ("h1", "h2", "h3", "h4") if (v := d.metadata.get(k))
                 )
                 results.append(
                     (self._make_chunk_id(doc_id, i), d.page_content, header, doc_id)
