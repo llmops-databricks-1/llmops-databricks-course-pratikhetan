@@ -19,7 +19,8 @@ dependencies = [
     "backoff==2.2.1",
     "mlflow==3.8.1",
     "nest-asyncio==1.6.0",
-    "arxiv==2.3.1",
+    "requests==2.32.3",
+    "trafilatura==2.0.0",
     "databricks-agents==1.8.2",
     "psycopg==3.3.2",
     "psycopg-pool==3.3.0",
@@ -46,9 +47,14 @@ include-package-data = true
 requires = ["setuptools>=72.0"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = [
+    "ruff>=0.15.6",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["your_custom_package*"]
+include = ["your_custom_package*", "arch_designer_agent*"]
 
 [tool.setuptools.dynamic]
 version = { file = "version.txt" }
@@ -61,6 +67,7 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 90
 
+[tool.ruff.lint]
 select = [
     "F",    # pyflakes rules
     "E",    # pycodestyle error rules
@@ -71,7 +78,7 @@ select = [
     "SIM",  # flake8-simplify rules
     "ERA",  # eradicate rules
     "C",    # pylint convention rules
-    "ANN"   # flake8-annotations rules
+    "ANN",  # flake8-annotations rules
 ]
 
 ignore = [
@@ -81,8 +88,6 @@ ignore = [
     "C901",   # too complex
     "ERA001", # commented out code
     "ANN204",
-    "ANN102",
-    "ANN101"
 ]
 
 [tool.ruff.format]

@@ -1,0 +1,23 @@
+resources:
+  jobs:
+    databricks_knowledge_ingestion_job:
+      name: databricks-knowledge-ingestion
+      tags:
+        project_name: "llmops-databricks-course-pratikhetan"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: databricks_knowledge_ingestion
+          environment_key: default
+          notebook_task:
+            notebook_path: ../notebooks/1.3_databricks_knowledge_ingestion.py
+            base_parameters:
+              env: ${bundle.target}
+              git_sha: "${var.git_sha}"
+              run_id: "{{job.run_id}}"
