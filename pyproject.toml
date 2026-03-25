@@ -21,6 +21,7 @@ dependencies = [
     "nest-asyncio==1.6.0",
     "requests==2.32.3",
     "trafilatura==2.0.0",
+    "langchain-text-splitters==0.3.8",
     "databricks-agents==1.8.2",
     "psycopg==3.3.2",
     "psycopg-pool==3.3.0",
@@ -92,3 +93,8 @@ ignore = [
 
 [tool.ruff.format]
 indent-style = "space"
+
+[tool.ruff.lint.per-file-ignores]
+# MAGIC comment lines in Databricks notebooks cannot be wrapped without
+# breaking the notebook format; suppress line-length and annotation rules.
+"notebooks/*.py" = ["E501", "ANN"]
