@@ -161,10 +161,16 @@ EXISTING_DOC_IDS: set[str] = _load_existing_doc_ids()
 
 # COMMAND ----------
 # -- Optional: full refresh ---------------------------------------------------
-# Uncomment and run this cell ALONE to wipe the table and re-ingest everything.
-spark.sql(f"TRUNCATE TABLE {FULL_TABLE}")
-EXISTING_DOC_IDS.clear()
-logger.info("Table truncated — next run will re-ingest all documents")
+# Set FORCE_RESET = True and re-run ONLY this cell to wipe the table.
+# Flip it back to False immediately after — do not leave True in the notebook.
+FORCE_RESET = False
+
+if FORCE_RESET:
+    spark.sql(f"TRUNCATE TABLE {FULL_TABLE}")
+    EXISTING_DOC_IDS.clear()
+    logger.warning("⚠ Table truncated — next run will re-ingest all documents")
+else:
+    logger.info("FORCE_RESET=False — incremental mode (no table truncation)")
 
 # COMMAND ----------
 # =============================================================================

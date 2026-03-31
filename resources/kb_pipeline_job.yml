@@ -1,0 +1,38 @@
+resources:
+  jobs:
+    kb_pipeline_job:
+      name: kb-pipeline
+      description: >
+        End-to-end knowledge base pipeline:
+          Task 1 — Ingest new docs into databricks_knowledge_base
+          Task 2 — Chunk new docs + sync Vector Search index
+      tags:
+        project_name: "llmops-databricks-course-pratikhetan"
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: ingest_knowledge_base
+          environment_key: default
+          notebook_task:
+            notebook_path: ../notebooks/1.3_databricks_knowledge_ingestion.py
+            base_parameters:
+              env: ${bundle.target}
+              git_sha: "${var.git_sha}"
+              run_id: "{{job.run_id}}"
+
+        - task_key: chunk_and_sync
+          depends_on:
+            - task_key: ingest_knowledge_base
+          environment_key: default
+          notebook_task:
+            notebook_path: ../notebooks/run_chunk_and_sync.py
+            base_parameters:
+              env: ${bundle.target}
+              git_sha: "${var.git_sha}"
+              run_id: "{{job.run_id}}"
