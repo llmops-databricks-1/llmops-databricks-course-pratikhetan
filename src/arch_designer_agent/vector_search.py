@@ -74,12 +74,15 @@ class VectorSearchManager:
         self.create_endpoint_if_not_exists()
         source_table = self._source_table
 
-        # Try to get existing index
+        # Try to get existing index — only swallow "not found", re-raise endpoint errors
         try:
             index = self.client.get_index(index_name=self.index_name)
             logger.info(f"✓ Vector search index exists: {self.index_name}")
             return index
-        except Exception:
+        except Exception as e:
+            if "NOT_FOUND" in str(e) and "endpoint" in str(e).lower():
+                # Index exists in UC but its endpoint is dead — caller handles this
+                raise
             logger.info(f"Index {self.index_name} not found, will create it")
 
         # Try to create the index
@@ -102,6 +105,18 @@ class VectorSearchManager:
             logger.info(f"✓ Vector search index exists: {self.index_name}")
             return self.client.get_index(index_name=self.index_name)
 
+    def _delete_stale_index_and_recreate(self, wait_timeout: int) -> None:
+        """Delete an index that references a deleted endpoint, then rebuild."""
+        logger.warning(
+            f"Index {self.index_name} references a deleted endpoint. "
+            "Deleting stale index and recreating from scratch..."
+        )
+        self.client.delete_index(self.endpoint_name, self.index_name)
+        index = self.create_or_get_index()
+        self._wait_for_index_online(index, timeout_seconds=wait_timeout)
+        index.sync()
+        logger.info("✓ Index sync triggered (after stale-index recovery)")
+
     def sync_index(self, wait_timeout: int = 600) -> None:
         """Create/get the index, wait until ONLINE, then trigger a sync.
 
@@ -109,10 +124,30 @@ class VectorSearchManager:
             wait_timeout: Seconds to wait for the index to become ONLINE
                           before raising TimeoutError.
         """
-        index = self.create_or_get_index()
-        self._wait_for_index_online(index, timeout_seconds=wait_timeout)
+        try:
+            index = self.create_or_get_index()
+        except Exception as e:
+            if "NOT_FOUND" in str(e) and "endpoint" in str(e).lower():
+                self._delete_stale_index_and_recreate(wait_timeout)
+                return
+            raise
+
+        try:
+            self._wait_for_index_online(index, timeout_seconds=wait_timeout)
+        except Exception as e:
+            if "NOT_FOUND" in str(e) and "endpoint" in str(e).lower():
+                self._delete_stale_index_and_recreate(wait_timeout)
+                return
+            raise
+
         logger.info(f"Syncing vector search index: {self.index_name}")
-        index.sync()
+        try:
+            index.sync()
+        except Exception as e:
+            if "NOT_FOUND" in str(e) and "endpoint" in str(e).lower():
+                self._delete_stale_index_and_recreate(wait_timeout)
+                return
+            raise
         logger.info("✓ Index sync triggered")
 
     def _wait_for_index_online(

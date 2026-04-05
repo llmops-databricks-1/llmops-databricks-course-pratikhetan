@@ -9,10 +9,10 @@ dev:
   embedding_endpoint: databricks-gte-large-en
   warehouse_id: 7077f4cb0e616c62
   vector_search_endpoint: llmops_course_vs_endpoint
-  genie_space_id: 01f113061bf41578baff744a41bd9ab0
+  genie_space_id: null
+  lakebase_instance: arch-agent-memory
+  usage_policy_id: null
   knowledge_base_table: databricks_knowledge_base
-
-# Acceptance/Staging environment
 acc:
   catalog: mlops_acc
   schema: pratikhe

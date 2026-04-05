@@ -21,6 +21,13 @@ class ProjectConfig(BaseModel):
     genie_space_id: str | None = Field(
         None, description="Genie space ID for MCP integration"
     )
+    lakebase_instance: str | None = Field(
+        None, description="Lakebase (PostgreSQL) instance name for conversation memory"
+    )
+    usage_policy_id: str | None = Field(
+        None,
+        description="Lakebase usage policy ID (required when creating a new instance)",
+    )
     system_prompt: str = Field(
         default=(
             "You are a Databricks Architecture Design & Optimization Agent."
