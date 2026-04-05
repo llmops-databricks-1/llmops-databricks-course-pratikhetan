@@ -18,7 +18,6 @@ w.secrets.put_secret(scope="admin1", key="account_id", string_value=account_id)
 # COMMAND ----------
 import requests
 from databricks.sdk import WorkspaceClient
-from requests.auth import HTTPBasicAuth
 
 w = WorkspaceClient()
 
@@ -34,7 +33,7 @@ instance_name = "arxiv-agent-instance"
 token = requests.post(
     f"{account_host}/oidc/accounts/{account_id}/v1/token",
     auth=HTTPBasicAuth(admin_client_id, admin_client_secret),
-    data={"grant_type": "client_credentials", "scope": "all-apis"}
+    data={"grant_type": "client_credentials", "scope": "all-apis"},
 ).json()["access_token"]
 
 # Step 1: Create service principal + OAuth secret
@@ -60,10 +59,8 @@ w.secrets.put_secret(scope=scope_name, key="client_secret", string_value=client_
 ws_token = w.tokens.create(lifetime_seconds=600).token_value
 requests.patch(
     f"{w.config.host}/api/2.0/permissions/database-instances/{instance_name}",
-    headers={"Authorization": f"Bearer {ws_token}",
-             "Content-Type": "application/json"},
-    json={"access_control_list": [{"service_principal_name": client_id,
-                                   "permission_level": "CAN_USE"}]}
+    headers={"Authorization": f"Bearer {ws_token}", "Content-Type": "application/json"},
+    json={"access_control_list": [{"service_principal_name": client_id, "permission_level": "CAN_USE"}]},
 ).raise_for_status()
 
 # Step 4: Postgres role SQL — run in Lakebase SQL Editor for 'arxiv-agent-instance'

@@ -23,13 +23,12 @@
 
 # COMMAND ----------
 
-from pyspark.sql import SparkSession
+from arxiv_curator.config import get_env, load_config
 from databricks.sdk import WorkspaceClient
 from databricks.vector_search.client import VectorSearchClient
-from openai import OpenAI
 from loguru import logger
-
-from arxiv_curator.config import load_config, get_env
+from openai import OpenAI
+from pyspark.sql import SparkSession
 
 # COMMAND ----------
 
@@ -47,7 +46,7 @@ w = WorkspaceClient()
 # Create OpenAI client for Databricks
 client = OpenAI(
     api_key=w.tokens.create(lifetime_seconds=1200).token_value,
-    base_url=f"{w.config.host}/serving-endpoints"
+    base_url=f"{w.config.host}/serving-endpoints",
 )
 
 # Create Vector Search client
@@ -68,40 +67,44 @@ logger.info(f"✓ Using LLM endpoint: {cfg.llm_endpoint}")
 
 # COMMAND ----------
 
+
 def retrieve_documents(query: str, num_results: int = 5) -> list[dict]:
     """Retrieve relevant documents from vector search.
-    
+
     Args:
         query: The search query
         num_results: Number of documents to retrieve
-        
+
     Returns:
         List of document dictionaries with title, text, and metadata
     """
     index_name = f"{cfg.catalog}.{cfg.schema}.arxiv_index"
     index = vsc.get_index(index_name=index_name)
-    
+
     results = index.similarity_search(
         query_text=query,
         columns=["text", "title", "arxiv_id", "authors", "year"],
         num_results=num_results,
-        query_type="hybrid"
+        query_type="hybrid",
     )
-    
+
     # Parse results
     documents = []
     if results and "result" in results:
         data_array = results["result"].get("data_array", [])
         for row in data_array:
-            documents.append({
-                "text": row[0],
-                "title": row[1],
-                "arxiv_id": row[2],
-                "authors": row[3],
-                "year": row[4],
-            })
-    
+            documents.append(
+                {
+                    "text": row[0],
+                    "title": row[1],
+                    "arxiv_id": row[2],
+                    "authors": row[3],
+                    "year": row[4],
+                }
+            )
+
     return documents
+
 
 # COMMAND ----------
 
@@ -124,13 +127,14 @@ for i, doc in enumerate(docs, 1):
 
 # COMMAND ----------
 
+
 def build_rag_prompt(question: str, documents: list[dict]) -> str:
     """Build a prompt with retrieved context.
-    
+
     Args:
         question: The user's question
         documents: List of retrieved documents
-        
+
     Returns:
         Formatted prompt string
     """
@@ -138,13 +142,13 @@ def build_rag_prompt(question: str, documents: list[dict]) -> str:
     context_parts = []
     for i, doc in enumerate(documents, 1):
         context_parts.append(f"""
-Document {i}: {doc['title']}
-ArXiv ID: {doc['arxiv_id']}
-Content: {doc['text']}
+Document {i}: {doc["title"]}
+ArXiv ID: {doc["arxiv_id"]}
+Content: {doc["text"]}
 """)
-    
+
     context = "\n---\n".join(context_parts)
-    
+
     prompt = f"""You are a helpful research assistant. Answer the question based on the provided context from research papers.
 
 CONTEXT:
@@ -159,8 +163,9 @@ INSTRUCTIONS:
 - Be concise but thorough
 
 ANSWER:"""
-    
+
     return prompt
+
 
 # COMMAND ----------
 
@@ -179,13 +184,14 @@ logger.info(f"Preview:\n{test_prompt[:500]}...")
 
 # COMMAND ----------
 
+
 def rag_query(question: str, num_docs: int = 5) -> dict:
     """Answer a question using RAG.
-    
+
     Args:
         question: The user's question
         num_docs: Number of documents to retrieve
-        
+
     Returns:
         Dictionary with answer and sources
     """
@@ -193,32 +199,28 @@ def rag_query(question: str, num_docs: int = 5) -> dict:
     logger.info(f"Retrieving documents for: '{question}'")
     documents = retrieve_documents(question, num_results=num_docs)
     logger.info(f"Retrieved {len(documents)} documents")
-    
+
     # Step 2: Build prompt with context
     prompt = build_rag_prompt(question, documents)
-    
+
     # Step 3: Generate answer with LLM
     logger.info("Generating answer...")
     response = client.chat.completions.create(
         model=cfg.llm_endpoint,
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
+        messages=[{"role": "user", "content": prompt}],
         max_tokens=1000,
         temperature=0.7,
     )
-    
+
     answer = response.choices[0].message.content
-    
+
     # Return answer with sources
     return {
         "question": question,
         "answer": answer,
-        "sources": [
-            {"title": doc["title"], "arxiv_id": doc["arxiv_id"]}
-            for doc in documents
-        ]
+        "sources": [{"title": doc["title"], "arxiv_id": doc["arxiv_id"]} for doc in documents],
     }
+
 
 # COMMAND ----------
 
@@ -235,7 +237,7 @@ logger.info(f"Question: {result['question']}")
 logger.info("=" * 80)
 logger.info(f"\nAnswer:\n{result['answer']}")
 logger.info("\nSources:")
-for src in result['sources']:
+for src in result["sources"]:
     logger.info(f"  - {src['title']} ({src['arxiv_id']})")
 
 # COMMAND ----------
@@ -248,7 +250,7 @@ logger.info(f"Question: {result2['question']}")
 logger.info("=" * 80)
 logger.info(f"\nAnswer:\n{result2['answer']}")
 logger.info("\nSources:")
-for src in result2['sources']:
+for src in result2["sources"]:
     logger.info(f"  - {src['title']} ({src['arxiv_id']})")
 
 # COMMAND ----------
@@ -260,25 +262,26 @@ for src in result2['sources']:
 
 # COMMAND ----------
 
+
 class SimpleRAG:
     """Simple RAG system with conversation history."""
-    
+
     def __init__(self, llm_endpoint: str, index_name: str):
         self.llm_endpoint = llm_endpoint
         self.index_name = index_name
         self.conversation_history = []
-        
+
         # Initialize clients
         self.w = WorkspaceClient()
         self.client = OpenAI(
             api_key=self.w.tokens.create(lifetime_seconds=1200).token_value,
-            base_url=f"{self.w.config.host}/serving-endpoints"
+            base_url=f"{self.w.config.host}/serving-endpoints",
         )
         self.vsc = VectorSearchClient(
             workspace_url=self.w.config.host,
             personal_access_token=self.w.tokens.create(lifetime_seconds=1200).token_value,
         )
-    
+
     def retrieve(self, query: str, num_results: int = 5) -> list[dict]:
         """Retrieve relevant documents."""
         index = self.vsc.get_index(index_name=self.index_name)
@@ -286,30 +289,29 @@ class SimpleRAG:
             query_text=query,
             columns=["text", "title", "arxiv_id"],
             num_results=num_results,
-            query_type="hybrid"
+            query_type="hybrid",
         )
-        
+
         documents = []
         if results and "result" in results:
             for row in results["result"].get("data_array", []):
-                documents.append({
-                    "text": row[0],
-                    "title": row[1],
-                    "arxiv_id": row[2],
-                })
+                documents.append(
+                    {
+                        "text": row[0],
+                        "title": row[1],
+                        "arxiv_id": row[2],
+                    }
+                )
         return documents
-    
+
     def chat(self, question: str, num_docs: int = 3) -> str:
         """Chat with RAG, maintaining conversation history."""
         # Retrieve documents
         documents = self.retrieve(question, num_results=num_docs)
-        
+
         # Build context
-        context = "\n\n".join([
-            f"[{doc['title']}]: {doc['text']}"
-            for doc in documents
-        ])
-        
+        context = "\n\n".join([f"[{doc['title']}]: {doc['text']}" for doc in documents])
+
         # Build system message with context
         system_message = f"""You are a helpful research assistant. Use the following context from research papers to answer questions.
 
@@ -317,30 +319,31 @@ CONTEXT:
 {context}
 
 If the context doesn't contain relevant information, say so. Always cite paper titles when making claims."""
-        
+
         # Add user message to history
         self.conversation_history.append({"role": "user", "content": question})
-        
+
         # Build messages for LLM
         messages = [{"role": "system", "content": system_message}] + self.conversation_history
-        
+
         # Generate response
         response = self.client.chat.completions.create(
             model=self.llm_endpoint,
             messages=messages,
             max_tokens=1000,
         )
-        
+
         answer = response.choices[0].message.content
-        
+
         # Add assistant response to history
         self.conversation_history.append({"role": "assistant", "content": answer})
-        
+
         return answer
-    
+
     def clear_history(self):
         """Clear conversation history."""
         self.conversation_history = []
+
 
 # COMMAND ----------
 

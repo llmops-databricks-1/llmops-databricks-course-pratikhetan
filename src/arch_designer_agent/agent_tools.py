@@ -53,8 +53,12 @@ class DatabricksExpertTools:
             all_vs = list(self.w.vector_search_endpoints.list())
             state["vector_search_endpoints"] = {
                 "relevant": [
-                    {"name": e.name, "state": str(e.endpoint_status.state) if e.endpoint_status else "unknown"}
-                    for e in all_vs if matches(e.name)
+                    {
+                        "name": e.name,
+                        "state": str(e.endpoint_status.state) if e.endpoint_status else "unknown",
+                    }
+                    for e in all_vs
+                    if matches(e.name)
                 ],
                 "total_scanned": len(all_vs),
             }
@@ -65,8 +69,12 @@ class DatabricksExpertTools:
             all_se = list(self.w.serving_endpoints.list())
             state["serving_endpoints"] = {
                 "relevant": [
-                    {"name": e.name, "state": str(e.state.config_update) if e.state else "unknown"}
-                    for e in all_se if matches(e.name)
+                    {
+                        "name": e.name,
+                        "state": str(e.state.config_update) if e.state else "unknown",
+                    }
+                    for e in all_se
+                    if matches(e.name)
                 ],
                 "total_scanned": len(all_se),
             }
@@ -81,7 +89,8 @@ class DatabricksExpertTools:
                         "name": p.name,
                         "state": str(p.latest_updates[0].state) if p.latest_updates else "no_runs",
                     }
-                    for p in all_dlt if p.name and matches(p.name)
+                    for p in all_dlt
+                    if p.name and matches(p.name)
                 ],
                 "total_scanned": len(all_dlt),
             }
@@ -91,14 +100,13 @@ class DatabricksExpertTools:
         try:
             # Use SDK (Unity Catalog REST API) instead of Spark — avoids Spark Connect
             # DATA_SOURCE_NOT_FOUND errors on tables with unsupported formats.
-            all_tables = list(self.w.tables.list(
-                catalog_name=self.cfg.catalog,
-                schema_name=self.cfg.schema,
-            ))
-            table_infos = [
-                {"name": t.name, "comment": t.comment or ""}
-                for t in all_tables
-            ]
+            all_tables = list(
+                self.w.tables.list(
+                    catalog_name=self.cfg.catalog,
+                    schema_name=self.cfg.schema,
+                )
+            )
+            table_infos = [{"name": t.name, "comment": t.comment or ""} for t in all_tables]
 
             all_table_names = [t["name"] for t in table_infos]
             state["tables"] = {
@@ -114,16 +122,9 @@ class DatabricksExpertTools:
             state["tables"] = {"error": str(exc)}
 
         try:
-            all_models = list(
-                self.w.registered_models.list(
-                    catalog_name=self.cfg.catalog, schema_name=self.cfg.schema
-                )
-            )
+            all_models = list(self.w.registered_models.list(catalog_name=self.cfg.catalog, schema_name=self.cfg.schema))
             state["registered_models"] = {
-                "relevant": [
-                    {"name": m.name}
-                    for m in all_models if matches(m.name)
-                ],
+                "relevant": [{"name": m.name} for m in all_models if matches(m.name)],
                 "total_scanned": len(all_models),
             }
         except Exception as exc:
@@ -136,9 +137,11 @@ class DatabricksExpertTools:
                     {
                         "name": j.settings.name,
                         "schedule": str(j.settings.schedule.quartz_cron_expression)
-                        if j.settings and j.settings.schedule else "manual",
+                        if j.settings and j.settings.schedule
+                        else "manual",
                     }
-                    for j in all_jobs if j.settings and matches(j.settings.name)
+                    for j in all_jobs
+                    if j.settings and matches(j.settings.name)
                 ],
                 "total_scanned": len(all_jobs),
             }
@@ -176,8 +179,7 @@ class DatabricksExpertTools:
         try:
             df = self.spark.table(table_name)
             result["columns"] = [
-                {"name": f.name, "type": str(f.dataType), "nullable": f.nullable}
-                for f in df.schema.fields
+                {"name": f.name, "type": str(f.dataType), "nullable": f.nullable} for f in df.schema.fields
             ]
         except Exception as exc:
             return {"error": f"Could not read table '{table_name}': {exc}"}
@@ -207,9 +209,7 @@ class DatabricksExpertTools:
             result["null_rates_pct"] = {"error": str(exc)}
 
         try:
-            result["sample_rows"] = [
-                row.asDict() for row in df.limit(3).collect()
-            ]
+            result["sample_rows"] = [row.asDict() for row in df.limit(3).collect()]
         except Exception as exc:
             result["sample_rows"] = {"error": str(exc)}
 
@@ -243,8 +243,7 @@ class DatabricksExpertTools:
             )
         if not questions:
             questions.append(
-                "• Could you share more about your latency, ingestion pattern, "
-                "governance needs, or cost constraints?"
+                "• Could you share more about your latency, ingestion pattern, governance needs, or cost constraints?"
             )
 
         clarification = (
@@ -263,9 +262,7 @@ class DatabricksExpertTools:
         """Return all custom tools wrapped as ToolInfo objects."""
 
         def _check_workspace_state(focus_keywords: list | None = None) -> str:
-            result = self.check_workspace_state(
-                {"focus_keywords": focus_keywords or []}
-            )
+            result = self.check_workspace_state({"focus_keywords": focus_keywords or []})
             return json.dumps(result, indent=2)
 
         def _profile_table(table_name: str) -> str:
@@ -276,12 +273,8 @@ class DatabricksExpertTools:
             result = self.health_check({})
             return json.dumps(result, indent=2)
 
-        def _clarify_requirements(
-            missing_constraints: list | None = None, query: str = ""
-        ) -> str:
-            result = self.clarify_requirements(
-                {"missing_constraints": missing_constraints or [], "query": query}
-            )
+        def _clarify_requirements(missing_constraints: list | None = None, query: str = "") -> str:
+            result = self.clarify_requirements({"missing_constraints": missing_constraints or [], "query": query})
             return json.dumps(result, indent=2)
 
         return [
@@ -348,8 +341,7 @@ class DatabricksExpertTools:
                                 "table_name": {
                                     "type": "string",
                                     "description": (
-                                        "Fully-qualified Delta table name "
-                                        "(catalog.schema.table or schema.table)."
+                                        "Fully-qualified Delta table name (catalog.schema.table or schema.table)."
                                     ),
                                 },
                             },
@@ -404,7 +396,7 @@ class DatabricksExpertTools:
                                     "type": "array",
                                     "items": {"type": "string"},
                                     "description": (
-                                        'List of constraint keys that are missing. '
+                                        "List of constraint keys that are missing. "
                                         'Valid values: "latency", "ingestion", "governance", "cost".'
                                     ),
                                 },

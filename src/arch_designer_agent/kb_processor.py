@@ -159,16 +159,8 @@ class KBProcessor:
         )
 
         chunks_df = self.spark.createDataFrame(chunk_rows, schema=KB_CHUNKS_SCHEMA)
-        (
-            chunks_df.write.format("delta")
-            .mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(self.chunks_table)
-        )
-        self.spark.sql(
-            f"ALTER TABLE {self.chunks_table} "
-            f"SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
-        )
+        (chunks_df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(self.chunks_table))
+        self.spark.sql(f"ALTER TABLE {self.chunks_table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
         logger.info(f"Appended {len(chunk_rows):,} chunks to {self.chunks_table}")
         return len(chunk_rows)
 
@@ -181,11 +173,7 @@ class KBProcessor:
         if not self.spark.catalog.tableExists(self.chunks_table):
             return set()
         ids = {
-            r["source_doc_id"]
-            for r in self.spark.table(self.chunks_table)
-            .select("source_doc_id")
-            .distinct()
-            .collect()
+            r["source_doc_id"] for r in self.spark.table(self.chunks_table).select("source_doc_id").distinct().collect()
         }
         logger.info(f"  {len(ids):,} doc_ids already chunked (incremental skip)")
         return ids
@@ -206,12 +194,8 @@ class KBProcessor:
             md_docs = self._md_splitter.split_text(content)
             sub_docs = self._char_splitter.split_documents(md_docs)
             for i, d in enumerate(sub_docs):
-                header = " > ".join(
-                    v for k in ("h1", "h2", "h3", "h4") if (v := d.metadata.get(k))
-                )
-                results.append(
-                    (self._make_chunk_id(doc_id, i), d.page_content, header, doc_id)
-                )
+                header = " > ".join(v for k in ("h1", "h2", "h3", "h4") if (v := d.metadata.get(k)))
+                results.append((self._make_chunk_id(doc_id, i), d.page_content, header, doc_id))
         else:
             for i, text in enumerate(self._char_splitter.split_text(content)):
                 results.append((self._make_chunk_id(doc_id, i), text, "", doc_id))

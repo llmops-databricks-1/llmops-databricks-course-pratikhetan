@@ -13,8 +13,8 @@ from pyspark.sql import SparkSession
 
 from arch_designer_agent.agent_tools import DatabricksExpertTools
 from arch_designer_agent.config import ProjectConfig
-from arch_designer_agent.memory import LakebaseMemory
 from arch_designer_agent.mcp import DatabricksOAuth, ToolRegistry, create_mcp_tools
+from arch_designer_agent.memory import LakebaseMemory
 
 
 class DatabricksExpertAgent:
@@ -65,9 +65,7 @@ class DatabricksExpertAgent:
         self.spark = spark
         self.cfg = config
         self.w = workspace_client or WorkspaceClient()
-        self.system_prompt = system_prompt or (
-            config.system_prompt or self.DEFAULT_SYSTEM_PROMPT
-        )
+        self.system_prompt = system_prompt or (config.system_prompt or self.DEFAULT_SYSTEM_PROMPT)
 
         # Production-grade token provider:
         # - SPN path: DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET env vars
@@ -109,9 +107,7 @@ class DatabricksExpertAgent:
                     database_instance=DatabaseInstance(name=instance_name, stopped=False),
                     update_mask="stopped",
                 )
-                instance = self.w.database.wait_get_database_instance_database_available(
-                    instance_name
-                )
+                instance = self.w.database.wait_get_database_instance_database_available(instance_name)
                 logger.info("  Lakebase instance started")
             return instance.read_write_dns
         except NotFound:
@@ -136,10 +132,7 @@ class DatabricksExpertAgent:
     def _load_tools(self) -> None:
         """Register MCP tools + custom tools into the registry."""
         # --- MCP: Vector Search index (kb_chunks_index) ---
-        vs_mcp_url = (
-            f"{self.w.config.host}/api/2.0/mcp/vector-search"
-            f"/{self.cfg.catalog}/{self.cfg.schema}"
-        )
+        vs_mcp_url = f"{self.w.config.host}/api/2.0/mcp/vector-search/{self.cfg.catalog}/{self.cfg.schema}"
         try:
             mcp_tools = asyncio.run(create_mcp_tools(self.w, [vs_mcp_url]))
             self.registry.register_many(mcp_tools)
@@ -211,10 +204,7 @@ class DatabricksExpertAgent:
         if conversation_id and self._memory:
             prior_messages = self._memory.load_messages(conversation_id)
             if prior_messages:
-                logger.info(
-                    f"  Loaded {len(prior_messages)} prior message(s) for "
-                    f"conversation '{conversation_id}'"
-                )
+                logger.info(f"  Loaded {len(prior_messages)} prior message(s) for conversation '{conversation_id}'")
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
@@ -241,23 +231,22 @@ class DatabricksExpertAgent:
                 # instead of using the structured tool-calling interface.
                 # e.g. 'profile_table(table_name="...")' returned as text content.
                 tool_names = self.registry.list_tools()
-                if any(
-                    final_answer.strip().startswith(name + "(")
-                    for name in tool_names
-                ):
+                if any(final_answer.strip().startswith(name + "(") for name in tool_names):
                     logger.warning(
                         "  LLM returned a tool call as plain text — re-prompting to use "
                         "the structured tool-calling interface."
                     )
                     messages.append({"role": "assistant", "content": final_answer})
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "You must call tools using the structured tool-calling interface, "
-                            "not by writing the call as plain text. "
-                            "Please call the tool now using the proper tool-calling mechanism."
-                        ),
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "You must call tools using the structured tool-calling interface, "
+                                "not by writing the call as plain text. "
+                                "Please call the tool now using the proper tool-calling mechanism."
+                            ),
+                        }
+                    )
                     continue
 
                 # LLM is done — return the final answer
@@ -267,21 +256,23 @@ class DatabricksExpertAgent:
                 return final_answer
 
             # LLM wants to call one or more tools — execute them
-            messages.append({
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in message.tool_calls
-                ],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in message.tool_calls
+                    ],
+                }
+            )
 
             for tool_call in message.tool_calls:
                 tool_name = tool_call.function.name
@@ -298,19 +289,19 @@ class DatabricksExpertAgent:
                     if hasattr(exc, "exceptions") and exc.exceptions:
                         cause = exc.exceptions[0]
                         logger.warning(
-                            f"Tool {tool_name} raised ExceptionGroup. "
-                            f"Sub-exception: {type(cause).__name__}: {cause}"
+                            f"Tool {tool_name} raised ExceptionGroup. Sub-exception: {type(cause).__name__}: {cause}"
                         )
                     result = f"Error executing {tool_name}: {cause}"
                     logger.warning(result)
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": str(result),
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": str(result),
+                    }
+                )
 
         if conversation_id and self._memory:
             self._memory.save_messages(conversation_id, messages[save_from_index:])
         return "Max iterations reached without a final answer."
-

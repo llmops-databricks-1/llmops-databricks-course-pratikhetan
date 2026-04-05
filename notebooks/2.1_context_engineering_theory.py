@@ -84,9 +84,7 @@ def estimate_tokens(text: str) -> int:
 
 # Example texts
 short_text = "Hello, world!"
-long_text = (
-    "This is a much longer piece of text that would be used in a real application. " * 100
-)
+long_text = "This is a much longer piece of text that would be used in a real application. " * 100
 
 logger.info(f"Short text: {estimate_tokens(short_text)} tokens")
 logger.info(f"Long text: {estimate_tokens(long_text)} tokens")
@@ -97,9 +95,7 @@ system_prompt_tokens = 200
 user_query_tokens = 100
 max_output_tokens = 2000
 
-available_for_context = (
-    context_window - system_prompt_tokens - user_query_tokens - max_output_tokens
-)
+available_for_context = context_window - system_prompt_tokens - user_query_tokens - max_output_tokens
 logger.info(f"\nAvailable tokens for context: {available_for_context:,}")
 logger.info(f"Approximate words: {available_for_context * 0.75:,.0f}")
 
@@ -386,9 +382,7 @@ logger.info(json.dumps(example_document, indent=2))
 def create_rag_prompt(query: str, context_chunks: list[str]) -> str:
     """Create a RAG prompt with context."""
 
-    context = "\n\n".join(
-        [f"[Document {i + 1}]\n{chunk}" for i, chunk in enumerate(context_chunks)]
-    )
+    context = "\n\n".join([f"[Document {i + 1}]\n{chunk}" for i, chunk in enumerate(context_chunks)])
 
     prompt = f"""Use the following context to answer the question. If the answer is not in the context, say "I don't have enough information to answer that."
 

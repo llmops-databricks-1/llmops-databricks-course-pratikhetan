@@ -47,10 +47,7 @@ class LakebaseMemory:
             request_id=str(uuid4()), instance_names=[self.instance_name]
         )
 
-        return (
-            f"postgresql://{username}:{pg_credential.token}@{self.host}:5432/"
-            "databricks_postgres?sslmode=require"
-        )
+        return f"postgresql://{username}:{pg_credential.token}@{self.host}:5432/databricks_postgres?sslmode=require"
 
     def _get_pool(self) -> ConnectionPool:
         """Get or create connection pool."""
@@ -101,17 +98,14 @@ class LakebaseMemory:
             logger.warning(f"Failed to load session messages: {e}")
             return []
 
-    def save_messages(
-        self, session_id: str, messages: list[dict[str, Any]]
-    ) -> None:
+    def save_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None:
         """Append messages to a session."""
         try:
             with self._get_pool().connection() as conn:
                 self._ensure_messages_table(conn)
                 for msg in messages:
                     conn.execute(
-                        "INSERT INTO session_messages (session_id, message_data) "
-                        "VALUES (%s, %s)",
+                        "INSERT INTO session_messages (session_id, message_data) VALUES (%s, %s)",
                         (session_id, json.dumps(msg)),
                     )
         except psycopg.OperationalError:

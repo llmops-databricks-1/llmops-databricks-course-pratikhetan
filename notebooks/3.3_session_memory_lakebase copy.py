@@ -10,13 +10,13 @@
 
 # COMMAND ----------
 
+from uuid import uuid4
+
+from arxiv_curator.config import get_env, load_config
+from arxiv_curator.memory import LakebaseMemory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.database import DatabaseInstance, DatabaseInstanceState
-from uuid import uuid4
 from loguru import logger
-
-from arxiv_curator.memory import LakebaseMemory
-from arxiv_curator.config import load_config, get_env
 
 # COMMAND ----------
 
@@ -46,8 +46,7 @@ try:
         logger.info("Instance is stopped, starting...")
         instance = w.database.update_database_instance(
             name=instance_name,
-            database_instance=DatabaseInstance(name=instance_name,
-                                               stopped=False),
+            database_instance=DatabaseInstance(name=instance_name, stopped=False),
             update_mask="stopped",
         )
         instance = w.database.wait_get_database_instance_database_available(instance_name)
@@ -56,10 +55,7 @@ try:
 except Exception:
     logger.info(f"Creating new instance: {instance_name}")
     instance = w.database.create_database_instance(
-        DatabaseInstance(
-            name=instance_name, capacity="CU_1",
-            usage_policy_id=usage_policy_id
-        ),
+        DatabaseInstance(name=instance_name, capacity="CU_1", usage_policy_id=usage_policy_id),
     )
     lakebase_host = instance.response.read_write_dns
 
@@ -103,7 +99,10 @@ session_id = f"test-session-{uuid4()}"
 # Save some messages
 test_messages = [
     {"role": "user", "content": "What are recent papers on transformers?"},
-    {"role": "assistant", "content": "Here are some recent papers on transformer architectures..."},
+    {
+        "role": "assistant",
+        "content": "Here are some recent papers on transformer architectures...",
+    },
     {"role": "user", "content": "Tell me more about the first one"},
 ]
 
@@ -132,21 +131,20 @@ for i, msg in enumerate(loaded_messages, 1):
 conversation_id = f"conversation-{uuid4()}"
 
 # Turn 1
-turn1_messages = [
-    {"role": "user", "content": "I'm interested in LLM evaluation metrics"}
-]
+turn1_messages = [{"role": "user", "content": "I'm interested in LLM evaluation metrics"}]
 memory.save_messages(conversation_id, turn1_messages)
 
 # Simulate agent response
 turn1_response = [
-    {"role": "assistant", "content": "Common LLM evaluation metrics include BLEU, ROUGE, and BERTScore..."}
+    {
+        "role": "assistant",
+        "content": "Common LLM evaluation metrics include BLEU, ROUGE, and BERTScore...",
+    }
 ]
 memory.save_messages(conversation_id, turn1_response)
 
 # Turn 2 - reference to previous context
-turn2_messages = [
-    {"role": "user", "content": "Which one is best for summarization?"}
-]
+turn2_messages = [{"role": "user", "content": "Which one is best for summarization?"}]
 memory.save_messages(conversation_id, turn2_messages)
 
 # Load full conversation
@@ -165,8 +163,8 @@ for msg in full_conversation:
 
 # COMMAND ----------
 
+from arxiv_curator.config import load_config
 from openai import OpenAI
-from arxiv_curator.config import load_config, get_env
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder.getOrCreate()
@@ -176,36 +174,41 @@ cfg = load_config("../project_config.yml", env)
 # Create OpenAI client for Databricks
 client = OpenAI(
     api_key=w.tokens.create(lifetime_seconds=1200).token_value,
-    base_url=f"{w.config.host}/serving-endpoints"
+    base_url=f"{w.config.host}/serving-endpoints",
 )
+
 
 def chat_with_memory(session_id: str, user_message: str, memory: LakebaseMemory) -> str:
     """Chat with LLM using session memory for context."""
     # Load previous messages
     previous_messages = memory.load_messages(session_id)
-    
+
     # Build messages with system prompt
-    messages = [
-        {"role": "system", "content": "You are a helpful research assistant."}
-    ] + previous_messages + [
-        {"role": "user", "content": user_message}
-    ]
-    
+    messages = (
+        [{"role": "system", "content": "You are a helpful research assistant."}]
+        + previous_messages
+        + [{"role": "user", "content": user_message}]
+    )
+
     # Call LLM
     response = client.chat.completions.create(
         model=cfg.llm_endpoint,
         messages=messages,
     )
-    
+
     assistant_response = response.choices[0].message.content
-    
+
     # Save new messages to memory
-    memory.save_messages(session_id, [
-        {"role": "user", "content": user_message},
-        {"role": "assistant", "content": assistant_response},
-    ])
-    
+    memory.save_messages(
+        session_id,
+        [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": assistant_response},
+        ],
+    )
+
     return assistant_response
+
 
 logger.info("✓ Chat function with memory created")
 

@@ -415,9 +415,7 @@ query = "How to implement a RAG pipeline with Databricks Vector Search?"
 logger.info(f"Query: {query}\n")
 
 # Strategy 1: Basic semantic search
-results_basic = index.similarity_search(
-    query_text=query, columns=["text", "title"], num_results=3
-)
+results_basic = index.similarity_search(query_text=query, columns=["text", "title"], num_results=3)
 
 logger.info("Strategy 1: Basic Semantic Search")
 logger.info("-" * 80)
@@ -477,9 +475,7 @@ for i, row in enumerate(parse_vector_search_results(results_reranked), 1):
 # COMMAND ----------
 
 # Check index status
-index_info = vs_manager.client.get_index(
-    endpoint_name=vs_manager.endpoint_name, index_name=vs_manager.index_name
-)
+index_info = vs_manager.client.get_index(endpoint_name=vs_manager.endpoint_name, index_name=vs_manager.index_name)
 
 logger.info("Index Information:")
 logger.info(f"  Name: {index_info.name}")

@@ -82,9 +82,7 @@ def _make_doc_id(key: str) -> str:
     return hashlib.md5(key.encode()).hexdigest()
 
 
-def _gh_get(
-    url: str, params: dict | None = None, max_retries: int = 4
-) -> dict | list | None:
+def _gh_get(url: str, params: dict | None = None, max_retries: int = 4) -> dict | list | None:
     """GitHub API GET with exponential backoff on rate-limit responses."""
     for attempt in range(max_retries):
         resp = requests.get(url, headers=_GH_HEADERS, params=params, timeout=20)
@@ -92,12 +90,8 @@ def _gh_get(
             return resp.json()
         if resp.status_code in (429, 403, 503):
             reset = resp.headers.get("X-RateLimit-Reset")
-            wait = (
-                max(int(reset) - int(time.time()) + 2, 5) if reset else 10 * (2**attempt)
-            )
-            logger.warning(
-                f"HTTP {resp.status_code} — sleeping {wait}s (attempt {attempt + 1})"
-            )
+            wait = max(int(reset) - int(time.time()) + 2, 5) if reset else 10 * (2**attempt)
+            logger.warning(f"HTTP {resp.status_code} — sleeping {wait}s (attempt {attempt + 1})")
             time.sleep(wait)
             continue
         if resp.status_code == 404:
@@ -267,10 +261,7 @@ with ThreadPoolExecutor(max_workers=10) as exe:
         except Exception as exc:
             logger.warning(f"  Accelerator error {futures[future]}: {exc}")
 
-logger.info(
-    f"Section 1 complete: {len(acc_docs)} new accelerators"
-    f" (scanned {len(raw_repos)} repos)"
-)
+logger.info(f"Section 1 complete: {len(acc_docs)} new accelerators (scanned {len(raw_repos)} repos)")
 
 # COMMAND ----------
 # =============================================================================
@@ -562,9 +553,7 @@ _BROWSER_HEADERS = {
 }
 
 
-def _fetch_url_doc(
-    title: str, url: str, source_repo: str, source_type: str = "oss_docs"
-) -> dict | None:
+def _fetch_url_doc(title: str, url: str, source_repo: str, source_type: str = "oss_docs") -> dict | None:
     """Fetch a single doc page and return a knowledge base record.
 
     Tries trafilatura first (fast path), then falls back to requests with
@@ -817,9 +806,7 @@ def _list_repo_files(repo: str, branch: str, directory: str) -> tuple[list[dict]
             if item.get("type") == "file":
                 files.append(item)
             elif item.get("type") == "dir":
-                sub = _gh_get(
-                    f"{GH_API}/repos/{repo}/contents/{item['path']}", params={"ref": br}
-                )
+                sub = _gh_get(f"{GH_API}/repos/{repo}/contents/{item['path']}", params={"ref": br})
                 if isinstance(sub, list):
                     files.extend(f for f in sub if f.get("type") == "file")
         return files, br
@@ -838,18 +825,11 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
     seen_paths: set[str] = set()
     for directory in scan_dirs:
         raw_files, resolved_br = _list_repo_files(repo, branch, directory)
-        ext_ok = [
-            f
-            for f in raw_files
-            if ("." + f.get("path", "").rsplit(".", 1)[-1].lower()) in exts
-        ]
+        ext_ok = [f for f in raw_files if ("." + f.get("path", "").rsplit(".", 1)[-1].lower()) in exts]
         kw_ok = [
             f
             for f in ext_ok
-            if not any(
-                skip in f.get("path", "").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
-                for skip in _SKIP_NAMES
-            )
+            if not any(skip in f.get("path", "").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() for skip in _SKIP_NAMES)
             and any(kw in f.get("path", "").lower() for kw in keywords)
         ]
         logger.info(
@@ -862,9 +842,7 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
                 continue
             seen_paths.add(path)
             stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            content = _raw_get(
-                f.get("download_url") or f"{RAW_BASE}/{repo}/{resolved_br}/{path}"
-            )
+            content = _raw_get(f.get("download_url") or f"{RAW_BASE}/{repo}/{resolved_br}/{path}")
             if not content:
                 continue
             cleaned = _clean_markdown(content)
@@ -884,8 +862,7 @@ def _fetch_gh_docs(repo: str, cfg: dict) -> list[dict]:
                     "stars": 0,
                     "content_text": cleaned,
                     "word_count": wc,
-                    "url": f.get("html_url")
-                    or f"https://github.com/{repo}/blob/{resolved_br}/{path}",
+                    "url": f.get("html_url") or f"https://github.com/{repo}/blob/{resolved_br}/{path}",
                     "last_updated": "",
                     "ingestion_timestamp": _NOW,
                 }
@@ -924,8 +901,7 @@ for repo_name, repo_cfg in _GH_SOURCES.items():
         new_repo_docs = [d for d in repo_docs if d["doc_id"] not in EXISTING_DOC_IDS]
         oss_docs.extend(new_repo_docs)
         logger.info(
-            f"    → {len(new_repo_docs)} new docs from {repo_name}"
-            f" ({len(repo_docs) - len(new_repo_docs)} skipped)"
+            f"    → {len(new_repo_docs)} new docs from {repo_name} ({len(repo_docs) - len(new_repo_docs)} skipped)"
         )
     except Exception as exc:
         logger.warning(f"    Failed {repo_name}: {exc}")
@@ -938,21 +914,13 @@ logger.info(f"Section 2 complete: {len(oss_docs)} OSS docs")
 # =============================================================================
 
 all_docs = acc_docs + oss_docs
-logger.info(
-    f"Total new documents: {len(all_docs)} "
-    f"(accelerators={len(acc_docs)}, oss_docs={len(oss_docs)})"
-)
+logger.info(f"Total new documents: {len(all_docs)} (accelerators={len(acc_docs)}, oss_docs={len(oss_docs)})")
 
 if not all_docs:
     logger.info("Nothing new to write — knowledge base is up to date.")
 else:
     new_df = spark.createDataFrame(all_docs, schema=KB_SCHEMA)
-    (
-        new_df.write.format("delta")
-        .mode("append")
-        .option("mergeSchema", "true")
-        .saveAsTable(FULL_TABLE)
-    )
+    (new_df.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(FULL_TABLE))
     logger.info(f"Appended {len(all_docs)} new docs to {FULL_TABLE}")
 
 total = spark.table(FULL_TABLE).count()

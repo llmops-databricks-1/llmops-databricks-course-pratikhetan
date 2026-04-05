@@ -40,14 +40,9 @@ class VectorSearchManager:
     def create_endpoint_if_not_exists(self) -> None:
         """Create vector search endpoint if it doesn't exist."""
         endpoints_response = self.client.list_endpoints()
-        endpoints = (
-            endpoints_response.get("endpoints", [])
-            if isinstance(endpoints_response, dict)
-            else []
-        )
+        endpoints = endpoints_response.get("endpoints", []) if isinstance(endpoints_response, dict) else []
         endpoint_exists = any(
-            (ep.get("name") if isinstance(ep, dict) else getattr(ep, "name", None))
-            == self.endpoint_name
+            (ep.get("name") if isinstance(ep, dict) else getattr(ep, "name", None)) == self.endpoint_name
             for ep in endpoints
         )
 
@@ -163,8 +158,7 @@ class VectorSearchManager:
         before the index is ready returns a 400 Bad Request.
         """
         logger.info(
-            f"Waiting for index to become ONLINE (timeout={timeout_seconds}s, "
-            f"poll every {poll_interval_seconds}s)…"
+            f"Waiting for index to become ONLINE (timeout={timeout_seconds}s, poll every {poll_interval_seconds}s)…"
         )
         start = time.time()
         while True:
@@ -175,9 +169,7 @@ class VectorSearchManager:
                 state = status.get("detailed_state", "") or status.get("ready_state", "")
             else:
                 status_obj = getattr(desc, "status", None)
-                state = getattr(status_obj, "detailed_state", "") or getattr(
-                    status_obj, "ready_state", ""
-                )
+                state = getattr(status_obj, "detailed_state", "") or getattr(status_obj, "ready_state", "")
 
             state_str = str(state).upper()
             logger.info(f"  Index state: {state_str}")

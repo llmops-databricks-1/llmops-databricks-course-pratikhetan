@@ -37,12 +37,10 @@
 # COMMAND ----------
 
 import asyncio
-import json
 
 import nest_asyncio
 from databricks.sdk import WorkspaceClient
 from loguru import logger
-from openai import OpenAI
 from pyspark.sql import SparkSession
 
 from arch_designer_agent.agent import DatabricksExpertAgent
@@ -108,9 +106,7 @@ for tool in mcp_tools:
 
 # COMMAND ----------
 
-custom_tool_infos = DatabricksExpertTools(
-    spark=spark, config=cfg
-).build_tool_infos()
+custom_tool_infos = DatabricksExpertTools(spark=spark, config=cfg).build_tool_infos()
 
 logger.info(f"Custom tools ({len(custom_tool_infos)}):")
 for tool in custom_tool_infos:
@@ -203,8 +199,7 @@ logger.info(f"\nAnswer:\n{answer1}")
 # COMMAND ----------
 
 query2 = (
-    "Design a real-time Databricks architecture for fraud detection "
-    "with strict compliance controls and low latency."
+    "Design a real-time Databricks architecture for fraud detection with strict compliance controls and low latency."
 )
 
 logger.info(f"Query: {query2}")
@@ -265,7 +260,9 @@ else:
 
 if cfg.lakebase_instance:
     from uuid import uuid4
+
     import psycopg
+
     from arch_designer_agent.memory import LakebaseMemory
 
     # Resolve host (reuses the instance the agent already started)
@@ -276,10 +273,13 @@ if cfg.lakebase_instance:
 
     # Round-trip via LakebaseMemory API
     test_session = f"connectivity-test-{uuid4()}"
-    mem.save_messages(test_session, [
-        {"role": "user", "content": "ping"},
-        {"role": "assistant", "content": "pong"},
-    ])
+    mem.save_messages(
+        test_session,
+        [
+            {"role": "user", "content": "ping"},
+            {"role": "assistant", "content": "pong"},
+        ],
+    )
     rows = mem.load_messages(test_session)
     assert len(rows) == 2, f"Expected 2 rows, got {len(rows)}"
     logger.info(f"✓ Round-trip OK — {len(rows)} messages stored and retrieved")
