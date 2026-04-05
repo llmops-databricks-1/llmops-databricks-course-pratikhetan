@@ -128,11 +128,7 @@ response = client.images.generate(
 )
 
 logger.info("Image generated successfully!")
-revised = (
-    response.data[0].revised_prompt
-    if hasattr(response.data[0], "revised_prompt")
-    else "N/A"
-)
+revised = response.data[0].revised_prompt if hasattr(response.data[0], "revised_prompt") else "N/A"
 logger.info(f"Prompt: {revised}")
 logger.info("Response format: b64_json")
 

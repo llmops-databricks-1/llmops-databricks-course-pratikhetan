@@ -124,6 +124,4 @@ logger.info(f"Total chunks in {processor.chunks_table}: {total_chunks:,}")
 # COMMAND ----------
 
 logger.info("Sample chunks by source_type:")
-chunks_tbl.select("source_type", "source_repo", "title", "section_header", "text").show(
-    10, truncate=60
-)
+chunks_tbl.select("source_type", "source_repo", "title", "section_header", "text").show(10, truncate=60)
