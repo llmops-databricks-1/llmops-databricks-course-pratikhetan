@@ -30,15 +30,8 @@ from databricks.sdk import WorkspaceClient
 from loguru import logger
 from pyspark.sql import SparkSession
 
-from arch_designer_agent.config import get_env, load_config
 from arch_designer_agent.agent import log_register_agent
-from arch_designer_agent.evaluation import (
-    architectural_clarity_guideline,
-    cites_databricks_service,
-    databricks_scope_guideline,
-    grounded_in_evidence_guideline,
-    response_length_check,
-)
+from arch_designer_agent.config import get_env, load_config
 
 nest_asyncio.apply()
 
@@ -70,7 +63,6 @@ logger.info(f"Experiment  : {cfg.experiment_name}")
 
 # COMMAND ----------
 
-from arch_designer_agent.agent import DatabricksExpertAgent
 from arch_designer_agent.evaluation import evaluate_agent
 
 eval_results = evaluate_agent(cfg, eval_inputs_path="../eval_inputs.txt")
@@ -94,9 +86,7 @@ for metric, value in eval_results.metrics.items():
 
 # Derive git SHA for lineage tracking (falls back to "local" outside git)
 try:
-    git_sha = subprocess.check_output(
-        ["git", "rev-parse", "--short", "HEAD"], text=True
-    ).strip()
+    git_sha = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], text=True).strip()
 except Exception:
     git_sha = os.getenv("GIT_SHA", "local")
 
@@ -154,11 +144,7 @@ logger.info(f"Model URI: models:/{model_name}@champion")
 
 loaded = mlflow.pyfunc.load_model(f"models:/{model_name}@champion")
 
-test_request = {
-    "input": [
-        {"role": "user", "content": "What is Delta Live Tables and when should I use it?"}
-    ]
-}
+test_request = {"input": [{"role": "user", "content": "What is Delta Live Tables and when should I use it?"}]}
 
 response = loaded.predict(test_request)
 logger.info("Smoke test response:")

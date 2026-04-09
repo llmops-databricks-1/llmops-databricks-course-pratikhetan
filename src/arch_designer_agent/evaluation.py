@@ -1,6 +1,5 @@
 import mlflow
 from mlflow.genai.scorers import Guidelines
-from loguru import logger
 
 from arch_designer_agent.agent import DatabricksExpertAgent
 from arch_designer_agent.config import ProjectConfig
@@ -44,6 +43,7 @@ grounded_in_evidence_guideline = Guidelines(
 # Custom scorers
 # ---------------------------------------------------------------------------
 
+
 @mlflow.genai.scorer
 def response_length_check(outputs: list) -> bool:
     """Architecture answers must have enough detail — at least 100 words.
@@ -62,10 +62,23 @@ def cites_databricks_service(outputs: list) -> bool:
     """
     text = _extract_text(outputs).lower()
     services = [
-        "delta live tables", "dlt", "delta lake", "unity catalog",
-        "vector search", "model serving", "databricks jobs", "mlflow",
-        "automl", "feature store", "lakebase", "genie", "warehouse",
-        "databricks sql", "serverless", "photon", "medallion",
+        "delta live tables",
+        "dlt",
+        "delta lake",
+        "unity catalog",
+        "vector search",
+        "model serving",
+        "databricks jobs",
+        "mlflow",
+        "automl",
+        "feature store",
+        "lakebase",
+        "genie",
+        "warehouse",
+        "databricks sql",
+        "serverless",
+        "photon",
+        "medallion",
     ]
     return any(s in text for s in services)
 
@@ -86,6 +99,7 @@ def _extract_text(outputs: list) -> str:
 # Evaluation runner
 # ---------------------------------------------------------------------------
 
+
 def evaluate_agent(
     cfg: ProjectConfig,
     eval_inputs_path: str,
@@ -100,15 +114,13 @@ def evaluate_agent(
         MLflow EvaluationResult with metrics.
     """
     from pyspark.sql import SparkSession
+
     spark = SparkSession.builder.getOrCreate()
 
     agent = DatabricksExpertAgent(spark=spark, config=cfg)
 
     with open(eval_inputs_path) as f:
-        eval_data = [
-            {"inputs": {"question": line.strip()}}
-            for line in f if line.strip()
-        ]
+        eval_data = [{"inputs": {"question": line.strip()}} for line in f if line.strip()]
 
     def predict_fn(question: str) -> str:
         return agent.chat(question)
@@ -136,7 +148,4 @@ def create_eval_data_from_file(eval_inputs_path: str) -> list[dict]:
         List of evaluation data dictionaries.
     """
     with open(eval_inputs_path) as f:
-        return [
-            {"inputs": {"question": line.strip()}}
-            for line in f if line.strip()
-        ]
+        return [{"inputs": {"question": line.strip()}} for line in f if line.strip()]

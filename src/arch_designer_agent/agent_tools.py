@@ -3,6 +3,12 @@
 import json
 from typing import Any
 
+from databricks.sdk import WorkspaceClient
+from pyspark.sql import SparkSession
+
+from arch_designer_agent.config import ProjectConfig
+from arch_designer_agent.mcp import ToolInfo
+
 # ---------------------------------------------------------------------------
 # Domain synonym expansion
 # ---------------------------------------------------------------------------
@@ -32,12 +38,6 @@ DOMAIN_SYNONYMS: dict[str, list[str]] = {
 # Tables that are internal agent infrastructure and must never appear in
 # workspace state results returned to the LLM.
 _INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
-
-from databricks.sdk import WorkspaceClient
-from pyspark.sql import SparkSession
-
-from arch_designer_agent.config import ProjectConfig
-from arch_designer_agent.mcp import ToolInfo
 
 
 class DatabricksExpertTools:
@@ -171,7 +171,6 @@ class DatabricksExpertTools:
             table_infos = [{"name": t.name, "comment": t.comment or ""} for t in all_tables]
 
             user_tables = [t for t in table_infos if t["name"] not in _INTERNAL_TABLES]
-            all_table_names = [t["name"] for t in user_tables]
             state["tables"] = {
                 "existing_relevant": [
                     {"name": t["name"], "comment": t["comment"]}

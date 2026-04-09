@@ -12,23 +12,19 @@
 
 # COMMAND ----------
 
-import mlflow
-from mlflow.genai.judges import make_judge
+import os
 from typing import Literal
-from pyspark.sql import SparkSession
 
-from arxiv_curator.config import load_config, get_env
+import mlflow
+from arxiv_curator.config import get_env, load_config
 from arxiv_curator.evaluation import (
     polite_tone_guideline,
-    hook_in_post_guideline,
-    scope_guideline,
     word_count_check,
-    mentions_papers
 )
-import os
 from dotenv import load_dotenv
-
 from loguru import logger
+from mlflow.genai.judges import make_judge
+from pyspark.sql import SparkSession
 
 # COMMAND ----------
 
@@ -133,13 +129,13 @@ mlflow.set_experiment(cfg.experiment_name)
 
 logger.info("Using Guidelines Scorer from arxiv_curator.evaluation:")
 logger.info(f"  Name: {polite_tone_guideline.name}")
-logger.info(f"  Type: Binary (Pass/Fail)")
+logger.info("  Type: Binary (Pass/Fail)")
 logger.info(f"  Guidelines: {len(polite_tone_guideline.guidelines)} rules")
-logger.info(f"Also available from package:")
-logger.info(f"  - hook_in_post_guideline: Checks for engaging hooks")
-logger.info(f"  - scope_guideline: Ensures responses stay on topic")
-logger.info(f"  - word_count_check: Custom scorer for word count")
-logger.info(f"  - mentions_papers: Checks if response mentions research papers")
+logger.info("Also available from package:")
+logger.info("  - hook_in_post_guideline: Checks for engaging hooks")
+logger.info("  - scope_guideline: Ensures responses stay on topic")
+logger.info("  - word_count_check: Custom scorer for word count")
+logger.info("  - mentions_papers: Checks if response mentions research papers")
 
 # COMMAND ----------
 
@@ -161,10 +157,7 @@ test_data = [
 ]
 
 # Evaluate
-results = mlflow.genai.evaluate(
-    data=test_data,
-    scorers=[polite_tone_guideline]
-)
+results = mlflow.genai.evaluate(data=test_data, scorers=[polite_tone_guideline])
 
 logger.info("Evaluation Results:")
 logger.info("=" * 80)
@@ -195,7 +188,7 @@ quality_judge = make_judge(
 
 logger.info("Judge Scorer Created:")
 logger.info(f"  Name: {quality_judge.name}")
-logger.info(f"  Type: Scored (1-5)")
+logger.info("  Type: Scored (1-5)")
 logger.info(f"  Judge Model: {cfg.llm_endpoint}")
 
 # COMMAND ----------
@@ -218,14 +211,11 @@ judge_test_data = [
 ]
 
 # Evaluate
-judge_results = mlflow.genai.evaluate(
-    data=judge_test_data,
-    scorers=[quality_judge]
-)
+judge_results = mlflow.genai.evaluate(data=judge_test_data, scorers=[quality_judge])
 
 logger.info("Judge Evaluation Results:")
 logger.info("=" * 80)
-display(judge_results.tables['eval_results'])
+display(judge_results.tables["eval_results"])
 
 # COMMAND ----------
 
@@ -234,12 +224,6 @@ display(judge_results.tables['eval_results'])
 
 # COMMAND ----------
 
-@mlflow.genai.scorer
-def word_count_check(outputs: list) -> bool:
-    """Check that the output is under 350 words."""
-    text = outputs[0].get("text", "") if isinstance(outputs[0], dict) else str(outputs[0])
-    word_count = len(text.split())
-    return word_count < 350
 
 @mlflow.genai.scorer
 def has_code_example(outputs: list) -> bool:
@@ -247,12 +231,13 @@ def has_code_example(outputs: list) -> bool:
     text = outputs[0].get("text", "") if isinstance(outputs[0], dict) else str(outputs[0])
     return "```" in text or "python" in text.lower()
 
+
 @mlflow.genai.scorer
 def response_length_score(outputs: list) -> float:
     """Score based on response length (0-1)."""
     text = outputs[0].get("text", "") if isinstance(outputs[0], dict) else str(outputs[0])
     word_count = len(text.split())
-    
+
     # Ideal range: 50-200 words
     if 50 <= word_count <= 200:
         return 1.0
@@ -260,6 +245,7 @@ def response_length_score(outputs: list) -> float:
         return word_count / 50  # Penalize too short
     else:
         return max(0.0, 1.0 - (word_count - 200) / 200)  # Penalize too long
+
 
 logger.info("Custom Scorers Created:")
 logger.info("  1. word_count_check (boolean)")
@@ -286,13 +272,12 @@ custom_test_data = [
 
 # Evaluate with custom scorers
 custom_results = mlflow.genai.evaluate(
-    data=custom_test_data,
-    scorers=[word_count_check, has_code_example, response_length_score]
+    data=custom_test_data, scorers=[word_count_check, has_code_example, response_length_score]
 )
 
 logger.info("Custom Scorer Results:")
 logger.info("=" * 80)
-display(custom_results.tables['eval_results'])
+display(custom_results.tables["eval_results"])
 
 # COMMAND ----------
 
@@ -305,8 +290,7 @@ display(custom_results.tables['eval_results'])
 sentiment_judge = make_judge(
     name="response_sentiment",
     instructions=(
-        "Analyze the sentiment of the response in {{ outputs }}. "
-        "Classify as: 'positive', 'neutral', or 'negative'"
+        "Analyze the sentiment of the response in {{ outputs }}. Classify as: 'positive', 'neutral', or 'negative'"
     ),
     feedback_value_type=Literal["positive", "neutral", "negative"],
     model=f"databricks:/{cfg.llm_endpoint}",
@@ -314,7 +298,7 @@ sentiment_judge = make_judge(
 
 logger.info("Categorical Judge Created:")
 logger.info(f"  Name: {sentiment_judge.name}")
-logger.info(f"  Categories: positive, neutral, negative")
+logger.info("  Categories: positive, neutral, negative")
 
 # COMMAND ----------
 
@@ -325,11 +309,11 @@ logger.info(f"  Categories: positive, neutral, negative")
 
 # Combine different types of scorers
 all_scorers = [
-    polite_tone_guideline,      # Binary guideline
-    quality_judge,              # Numeric judge (1-5)
-    word_count_check,           # Boolean custom
-    response_length_score,      # Float custom (0-1)
-    sentiment_judge,            # Categorical judge
+    polite_tone_guideline,  # Binary guideline
+    quality_judge,  # Numeric judge (1-5)
+    word_count_check,  # Boolean custom
+    response_length_score,  # Float custom (0-1)
+    sentiment_judge,  # Categorical judge
 ]
 
 comprehensive_test_data = [
@@ -340,14 +324,11 @@ comprehensive_test_data = [
 ]
 
 # Evaluate with all scorers
-comprehensive_results = mlflow.genai.evaluate(
-    data=comprehensive_test_data,
-    scorers=all_scorers
-)
+comprehensive_results = mlflow.genai.evaluate(data=comprehensive_test_data, scorers=all_scorers)
 
 logger.info("Comprehensive Evaluation Results:")
 logger.info("=" * 80)
-comprehensive_results
+logger.info(comprehensive_results)
 
 # COMMAND ----------
 

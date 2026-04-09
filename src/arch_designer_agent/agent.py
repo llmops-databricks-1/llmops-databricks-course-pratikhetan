@@ -216,7 +216,7 @@ class DatabricksExpertAgent(ResponsesAgent):
             self._memory.save_messages(conversation_id, messages)
 
     @mlflow.trace(span_type=SpanType.TOOL)
-    def _execute_tool(self, tool_name: str, tool_args: dict[str, Any]) -> Any:
+    def _execute_tool(self, tool_name: str, tool_args: dict[str, Any]) -> object:
         """Execute a registered tool with MLflow tracing."""
         return self.registry.execute(tool_name, tool_args)
 
@@ -225,7 +225,7 @@ class DatabricksExpertAgent(ResponsesAgent):
     # ------------------------------------------------------------------
 
     @backoff.on_exception(backoff.expo, openai.RateLimitError)
-    def _call_llm(self, messages: list[dict[str, Any]]) -> Any:
+    def _call_llm(self, messages: list[dict[str, Any]]) -> openai.types.chat.ChatCompletion:
         """Call the LLM with exponential backoff on 429s and an MLflow LLM span.
 
         Why backoff?  Production serving endpoints occasionally return RateLimitError
@@ -496,7 +496,7 @@ class DatabricksExpertAgent(ResponsesAgent):
 
 
 def log_register_agent(
-    cfg,
+    cfg: ProjectConfig,
     git_sha: str,
     run_id: str,
     agent_code_path: str,
