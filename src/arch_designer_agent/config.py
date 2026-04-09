@@ -26,6 +26,10 @@ class ProjectConfig(BaseModel):
         None,
         description="Lakebase usage policy ID (required when creating a new instance)",
     )
+    experiment_name: str = Field(
+        default="/Shared/arch-designer-agent",
+        description="MLflow experiment path for evaluation and model logging",
+    )
     system_prompt: str = Field(
         default=(
             "You are a Databricks Architecture Design & Optimization Agent."

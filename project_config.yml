@@ -12,6 +12,7 @@ dev:
   genie_space_id: null
   lakebase_instance: arch-agent-memory
   usage_policy_id: null
+  experiment_name: /Shared/arch-designer-agent
   knowledge_base_table: databricks_knowledge_base
 acc:
   catalog: mlops_acc

@@ -2,22 +2,42 @@
 
 import asyncio
 import json
+import re
+import warnings
+from collections.abc import Generator
+from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
+import backoff
+import mlflow
+import openai
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.database import DatabaseInstance, DatabaseInstanceState
 from loguru import logger
-from openai import OpenAI
+from mlflow import MlflowClient
+from mlflow.entities import SpanType
+from mlflow.models.resources import (
+    DatabricksServingEndpoint,
+    DatabricksTable,
+    DatabricksVectorSearchIndex,
+)
+from mlflow.pyfunc import ResponsesAgent
+from mlflow.types.responses import (
+    ResponsesAgentRequest,
+    ResponsesAgentResponse,
+    ResponsesAgentStreamEvent,
+)
 from pyspark.sql import SparkSession
 
 from arch_designer_agent.agent_tools import DatabricksExpertTools
 from arch_designer_agent.config import ProjectConfig
-from arch_designer_agent.mcp import DatabricksOAuth, ToolRegistry, create_mcp_tools
+from arch_designer_agent.mcp import ToolRegistry, create_mcp_tools
 from arch_designer_agent.memory import LakebaseMemory
 
 
-class DatabricksExpertAgent:
+class DatabricksExpertAgent(ResponsesAgent):
     """Architecture assistant that lets the LLM decide which tools to call.
 
     Tool pool (registered at startup):
@@ -39,20 +59,45 @@ class DatabricksExpertAgent:
         "You have access to these tools — call them whenever they provide information "
         "you cannot derive from context alone:\n"
         "  • KB search (MCP)         — grounded evidence from Databricks documentation\n"
-        "  • check_workspace_state   — live inventory of the user's workspace (endpoints, tables, models, jobs)\n"
+        "  • check_workspace_state   — shows EXISTING resources in the user's workspace\n"
         "  • profile_table           — schema, row count, nulls, sample rows for a Delta table\n"
         "  • clarify_requirements    — ask the user for constraints (ONLY if none were given)\n"
         "  • health_check            — verify KB Delta tables exist\n\n"
-        "For DESIGN questions, your answer must be grounded in:\n"
-        "  - What Databricks documentation says about the applicable patterns (KB search)\n"
-        "  - What already exists in the workspace (relevant endpoints, tables, models, jobs)\n"
-        "  - What the relevant data actually looks like (schema, volume, freshness, quality)\n"
-        "Use your tools to gather whichever of these you need, in whatever order makes sense. "
-        "Call tools multiple times if needed. Skip tools that would not add information. "
-        "Your recommendation must explicitly reference what you found — "
-        "actual resource names, column names, row counts, and KB sources.\n\n"
-        "For FACTUAL questions: search the KB and answer with citations.\n\n"
-        "Always cite specific sources. Never invent Databricks features."
+        "ARCHITECTURE RECOMMENDATION RULES:\n"
+        "  1. Databricks documentation has already been retrieved for this query and is "
+        "shown in the conversation above as KB search results. Always ground your answer "
+        "in those results — cite specific service names, patterns, and configuration "
+        "options from the KB. Do not answer from training knowledge alone.\n"
+        "  2. Workspace state (check_workspace_state) is SUPPLEMENTARY CONTEXT only. "
+        "It shows what already exists and CAN be leveraged — it must never change "
+        "your core architecture pattern. Do NOT adapt medallion layer design "
+        "based on existing table names (e.g., a table named 'gold_transactions' does "
+        "not mean you should skip Bronze/Silver layers). Do NOT recommend a different "
+        "architecture because a table named 'supply_chain_risk' exists when the user "
+        "asked about fraud detection.\n"
+        "  3. Mention existing resources as: 'The workspace already has X — this can "
+        "be leveraged as [role in architecture] if applicable.' "
+        "ONLY include this section if check_workspace_state returned "
+        "has_relevant_resources=true. If has_relevant_resources=false, "
+        "skip the existing-resources section entirely — do not say 'no relevant "
+        "resources found'.\n"
+        "  4. For DESIGN questions: Databricks documentation has already been retrieved and "
+        "is shown above in the conversation. Use it as your primary source. Then call "
+        "check_workspace_state to identify existing resources, and optionally profile_table "
+        "if a specific table is directly relevant. Answer with KB-grounded architecture "
+        "first; include an existing-resources section only if has_relevant_resources=true.\n"
+        "  5. For FACTUAL questions: Databricks documentation has already been retrieved "
+        "above — answer directly from it with citations. Only call KB search again if "
+        "you need information on a different topic.\n"
+        "  6. CITATIONS ARE MANDATORY: For every KB result you use, include the source "
+        "as a markdown hyperlink using the exact URL from the KB result. Format: "
+        "[title or description](url). If a KB result lists a GitHub repo or docs page, "
+        "link to it directly. Never omit sources.\n"
+        "  7. NEVER include tool calls in your final text answer. Never write sentences "
+        "like 'let me check...' or 'let\\'s check existing resources...' in your answer. "
+        "If you need to call a tool, do it using the structured tool-calling interface "
+        "BEFORE writing your final answer — not inside it.\n\n"
+        "Always ground your answer in the KB results shown above. Never invent Databricks features."
     )
 
     def __init__(
@@ -67,11 +112,11 @@ class DatabricksExpertAgent:
         self.w = workspace_client or WorkspaceClient()
         self.system_prompt = system_prompt or (config.system_prompt or self.DEFAULT_SYSTEM_PROMPT)
 
-        # Production-grade token provider:
-        # - SPN path: DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET env vars
-        #   set via load_spn_credentials().  M2M OAuth, auto-refreshes silently.
-        # - PAT fallback: short-lived PAT created per chat() call (dev/notebook).
-        self._oauth = DatabricksOAuth(self.w)
+        # LLM client via SDK helper — handles auth automatically using whatever
+        # credentials WorkspaceClient was configured with (SPN M2M OAuth when
+        # DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET are set, PAT otherwise).
+        # Token refresh is managed internally by the SDK; safe to reuse across calls.
+        self._llm_client = self.w.serving_endpoints.get_open_ai_client()
 
         # Lakebase memory (optional — only if lakebase_instance is configured)
         self._memory: LakebaseMemory | None = None
@@ -157,23 +202,59 @@ class DatabricksExpertAgent:
         self.registry.register_many(custom_tools)
         logger.info(f"  Registered {len(custom_tools)} custom tool(s): {[t.name for t in custom_tools]}")
 
+    @mlflow.trace(span_type=SpanType.RETRIEVER, name="memory_load")
+    def _load_memory(self, conversation_id: str) -> list[dict[str, Any]]:
+        """Load prior messages from Lakebase for a session."""
+        if self._memory:
+            return self._memory.load_messages(conversation_id)
+        return []
+
+    @mlflow.trace(span_type=SpanType.CHAIN, name="memory_save")
+    def _save_memory(self, conversation_id: str, messages: list[dict[str, Any]]) -> None:
+        """Save new messages to Lakebase for a session."""
+        if self._memory:
+            self._memory.save_messages(conversation_id, messages)
+
+    @mlflow.trace(span_type=SpanType.TOOL)
+    def _execute_tool(self, tool_name: str, tool_args: dict[str, Any]) -> Any:
+        """Execute a registered tool with MLflow tracing."""
+        return self.registry.execute(tool_name, tool_args)
+
     # ------------------------------------------------------------------
     # Agent loop
     # ------------------------------------------------------------------
 
-    def _make_llm_client(self) -> OpenAI:
-        """Create an OpenAI client with a fresh, valid token.
+    @backoff.on_exception(backoff.expo, openai.RateLimitError)
+    def _call_llm(self, messages: list[dict[str, Any]]) -> Any:
+        """Call the LLM with exponential backoff on 429s and an MLflow LLM span.
 
-        Called once per chat() turn so SPN tokens are always current.
-        With SPN, DatabricksOAuth returns a cached + auto-refreshed OAuth token
-        (no network call unless the token is expiring).
-        With PAT fallback, creates a new 1-hour PAT.
+        Why backoff?  Production serving endpoints occasionally return RateLimitError
+        (HTTP 429) under burst load.  Backoff retries with exponential delay so the
+        caller never has to handle transient errors manually.
+
+        Why LLM span?  MLflow Tracing surfaces token-usage and latency per LLM call
+        in the Databricks UI, enabling cost attribution and latency profiling across
+        multiple tool-call rounds in the same agent turn.
         """
-        return OpenAI(
-            api_key=self._oauth.token(),
-            base_url=f"{self.w.config.host}/serving-endpoints",
-        )
+        tool_specs = self.registry.get_all_specs()
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="PydanticSerializationUnexpectedValue")
+            with mlflow.start_span(name="call_llm", span_type=SpanType.LLM) as span:
+                span.set_inputs({"model": self.cfg.llm_endpoint, "num_messages": len(messages)})
+                response = self._llm_client.chat.completions.create(
+                    model=self.cfg.llm_endpoint,
+                    messages=messages,
+                    tools=tool_specs if tool_specs else None,
+                )
+                span.set_outputs(
+                    {
+                        "model": response.model,
+                        "usage": response.usage.model_dump() if response.usage else {},
+                    }
+                )
+                return response
 
+    @mlflow.trace(span_type=SpanType.AGENT)
     def chat(
         self,
         user_message: str,
@@ -196,13 +277,9 @@ class DatabricksExpertAgent:
         Returns:
             Final text answer from the LLM.
         """
-        # Fresh client per chat() call — token is cheap to obtain for SPN
-        # (SDK caches and auto-refreshes internally) and correct by design.
-        llm_client = self._make_llm_client()
-
         prior_messages: list[dict[str, Any]] = []
         if conversation_id and self._memory:
-            prior_messages = self._memory.load_messages(conversation_id)
+            prior_messages = self._load_memory(conversation_id)
             if prior_messages:
                 logger.info(f"  Loaded {len(prior_messages)} prior message(s) for conversation '{conversation_id}'")
 
@@ -212,16 +289,50 @@ class DatabricksExpertAgent:
             {"role": "user", "content": user_message},
         ]
         save_from_index = 1 + len(prior_messages)
-        tool_specs = self.registry.get_all_specs()
+
+        # Pre-fetch KB results before the LLM loop so the LLM always starts with
+        # grounded documentation context — no tool-ordering guard needed.
+        # MCP KB tool names contain "__" (catalog__schema__index naming convention).
+        mcp_tool_names = {t for t in self.registry.list_tools() if "__" in t}
+        if mcp_tool_names:
+            kb_tool = sorted(mcp_tool_names)[0]
+            try:
+                kb_context = self._execute_tool(kb_tool, {"query": user_message})
+                prefetch_id = f"prefetch_{uuid4().hex[:8]}"
+                # Inject as a synthetic assistant → tool pair so the LLM sees KB
+                # results exactly as if it had called the tool itself first.
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": prefetch_id,
+                                "type": "function",
+                                "function": {
+                                    "name": kb_tool,
+                                    "arguments": json.dumps({"query": user_message}),
+                                },
+                            }
+                        ],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": prefetch_id,
+                        "content": str(kb_context),
+                    }
+                )
+                logger.info(f"  → Tool called (pre-fetch): {kb_tool}(['query'])")
+                logger.debug(f"  KB pre-fetch result (first 500 chars): {str(kb_context)[:500]}")
+            except Exception as exc:
+                logger.warning(f"  KB pre-fetch failed ({exc}); LLM can still call KB via tools")
 
         for iteration in range(max_iterations):
             logger.debug(f"Agent loop iteration {iteration + 1}/{max_iterations}")
 
-            response = llm_client.chat.completions.create(
-                model=self.cfg.llm_endpoint,
-                messages=messages,
-                tools=tool_specs if tool_specs else None,
-            )
+            response = self._call_llm(messages)
             message = response.choices[0].message
 
             if not message.tool_calls:
@@ -229,9 +340,39 @@ class DatabricksExpertAgent:
 
                 # Guard: detect when the LLM writes a tool call as plain text
                 # instead of using the structured tool-calling interface.
-                # e.g. 'profile_table(table_name="...")' returned as text content.
+                # Catches calls at start, middle, or end of the response
+                # e.g. '[check_workspace_state(...)]' appended after the answer.
                 tool_names = self.registry.list_tools()
-                if any(final_answer.strip().startswith(name + "(") for name in tool_names):
+                _plain_text_tool = next(
+                    (name for name in tool_names if re.search(rf"\b{re.escape(name)}\s*\(", final_answer)),
+                    None,
+                )
+                if _plain_text_tool:
+                    # Strip everything from the tool call onward — often the answer
+                    # itself is complete and only the trailing narration is wrong.
+                    _cut = re.search(rf"[\[\(]?\b{re.escape(_plain_text_tool)}\s*\(", final_answer)
+                    # Also strip any lead-in sentence like "let's check..." before the tool call
+                    _lead_in = (
+                        re.search(
+                            r"\n*[^\n]*(?:let(?:'s| me| us)|to (?:further|also|check)|now (?:let|check))[^\n]*$",
+                            final_answer[: _cut.start()],
+                            re.IGNORECASE,
+                        )
+                        if _cut
+                        else None
+                    )
+                    cut_at = _lead_in.start() if _lead_in else (_cut.start() if _cut else len(final_answer))
+                    clean_answer = final_answer[:cut_at].rstrip()
+                    if clean_answer:
+                        # The answer before the tool call is valid — return it directly.
+                        logger.warning(
+                            f"  LLM appended plain-text tool call ({_plain_text_tool}) after answer — trimmed."
+                        )
+                        messages.append({"role": "assistant", "content": clean_answer})
+                        if conversation_id and self._memory:
+                            self._save_memory(conversation_id, messages[save_from_index:])
+                        return clean_answer
+                    # No valid answer before the tool call — re-prompt to use structured interface.
                     logger.warning(
                         "  LLM returned a tool call as plain text — re-prompting to use "
                         "the structured tool-calling interface."
@@ -252,10 +393,10 @@ class DatabricksExpertAgent:
                 # LLM is done — return the final answer
                 messages.append({"role": "assistant", "content": final_answer})
                 if conversation_id and self._memory:
-                    self._memory.save_messages(conversation_id, messages[save_from_index:])
+                    self._save_memory(conversation_id, messages[save_from_index:])
                 return final_answer
 
-            # LLM wants to call one or more tools — execute them
+            # LLM wants to call one or more tools — execute them.
             messages.append(
                 {
                     "role": "assistant",
@@ -280,7 +421,7 @@ class DatabricksExpertAgent:
                 logger.info(f"  → Tool called: {tool_name}({list(tool_args.keys())})")
 
                 try:
-                    result = self.registry.execute(tool_name, tool_args)
+                    result = self._execute_tool(tool_name, tool_args)
                 except Exception as exc:
                     # Unwrap ExceptionGroup (Python 3.11+ TaskGroup errors) so the
                     # real cause is visible in logs rather than "unhandled errors in
@@ -303,5 +444,139 @@ class DatabricksExpertAgent:
                 )
 
         if conversation_id and self._memory:
-            self._memory.save_messages(conversation_id, messages[save_from_index:])
+            self._save_memory(conversation_id, messages[save_from_index:])
         return "Max iterations reached without a final answer."
+
+    # ------------------------------------------------------------------
+    # MLflow pyfunc / ResponsesAgent serving interface
+    # ------------------------------------------------------------------
+
+    def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+        """MLflow pyfunc entrypoint — makes this agent deployable to Databricks Model Serving.
+
+        Why ResponsesAgent?
+        Subclassing ``mlflow.pyfunc.ResponsesAgent`` means ``mlflow.pyfunc.log_model``
+        automatically knows how to call the agent at serving time.  Without it you need
+        hand-written Python wrapper logic in the serving image.  With it, Model Serving
+        calls ``predict()`` directly and handles request/response serialisation.
+
+        The request ``custom_inputs`` dict accepts:
+        - ``session_id``: str — optional session key for multi-turn Lakebase memory.
+        """
+        custom = request.custom_inputs or {}
+        session_id = custom.get("session_id")
+        user_message = next(
+            (item.content for item in request.input if item.role == "user"),
+            "",
+        )
+        answer = self.chat(user_message, conversation_id=session_id)
+        return ResponsesAgentResponse(
+            output=[self.create_text_output_item(answer, str(uuid4()))],
+            custom_outputs=request.custom_inputs,
+        )
+
+    def predict_stream(self, request: ResponsesAgentRequest) -> Generator[ResponsesAgentStreamEvent, None, None]:
+        """Streaming variant of predict() required by the ResponsesAgent interface.
+
+        Our agent runs a non-streaming internal loop (simpler, easier to debug).
+        The full answer is buffered and emitted as a single done event — enough for
+        Databricks Model Serving to stream one final chunk back to the client.
+        """
+        custom = request.custom_inputs or {}
+        session_id = custom.get("session_id")
+        user_message = next(
+            (item.content for item in request.input if item.role == "user"),
+            "",
+        )
+        answer = self.chat(user_message, conversation_id=session_id)
+        yield ResponsesAgentStreamEvent(
+            type="response.output_item.done",
+            item=self.create_text_output_item(answer, str(uuid4())),
+        )
+
+
+def log_register_agent(
+    cfg,
+    git_sha: str,
+    run_id: str,
+    agent_code_path: str,
+    model_name: str,
+    evaluation_metrics: dict | None = None,
+) -> mlflow.entities.model_registry.RegisteredModel:
+    """Log and register DatabricksExpertAgent to Unity Catalog via MLflow.
+
+    Placed here (alongside the agent class) following the same convention as the
+    course-code-hub repo, where log_register_agent lives at the bottom of agent.py.
+    Keeping deployment logic next to the agent makes it easy to find and keeps
+    evaluation.py focused purely on scoring.
+
+    Args:
+        cfg: Project configuration.
+        git_sha: Git commit SHA for reproducibility tracking.
+        run_id: Pipeline run identifier (set automatically by Databricks Jobs).
+        agent_code_path: Path to this agent Python file (logged as pyfunc).
+        model_name: Full Unity Catalog path e.g. mlops_dev.pratikhe.arch_agent.
+        evaluation_metrics: Optional dict of eval metrics to log alongside the model.
+
+    Returns:
+        RegisteredModel from Unity Catalog.
+    """
+    resources = [
+        DatabricksServingEndpoint(endpoint_name=cfg.llm_endpoint),
+        DatabricksServingEndpoint(endpoint_name=cfg.embedding_endpoint),
+        DatabricksVectorSearchIndex(index_name=f"{cfg.catalog}.{cfg.schema}.kb_chunks_index"),
+        DatabricksTable(table_name=f"{cfg.catalog}.{cfg.schema}.kb_chunks"),
+        DatabricksTable(table_name=f"{cfg.catalog}.{cfg.schema}.databricks_knowledge_base"),
+    ]
+
+    model_config = {
+        "catalog": cfg.catalog,
+        "schema": cfg.schema,
+        "llm_endpoint": cfg.llm_endpoint,
+        "embedding_endpoint": cfg.embedding_endpoint,
+        "vector_search_endpoint": cfg.vector_search_endpoint,
+        "system_prompt": cfg.system_prompt,
+        "lakebase_instance": cfg.lakebase_instance,
+    }
+
+    test_request = {"input": [{"role": "user", "content": "What is Delta Live Tables and when should I use it?"}]}
+
+    mlflow.set_experiment(cfg.experiment_name)
+    ts = datetime.now().strftime("%Y-%m-%d")
+
+    with mlflow.start_run(
+        run_name=f"arch-agent-{ts}",
+        tags={"git_sha": git_sha, "run_id": run_id},
+    ):
+        model_info = mlflow.pyfunc.log_model(
+            name="agent",
+            python_model=agent_code_path,
+            resources=resources,
+            input_example=test_request,
+            model_config=model_config,
+        )
+        if evaluation_metrics:
+            mlflow.log_metrics(evaluation_metrics)
+
+    logger.info(f"Registering model: {model_name}")
+    registered_model = mlflow.register_model(
+        model_uri=model_info.model_uri,
+        name=model_name,
+        tags={"git_sha": git_sha, "run_id": run_id},
+    )
+    logger.info(f"Registered version: {registered_model.version}")
+
+    client = MlflowClient()
+    logger.info("Setting alias 'champion'")
+    client.set_registered_model_alias(
+        name=model_name,
+        alias="champion",
+        version=registered_model.version,
+    )
+    return registered_model
+
+
+# Required by MLflow when this file is used as a pyfunc code model
+# (mlflow.pyfunc.log_model(python_model="agent.py")).
+# MLflow needs to know which class to instantiate at serving time.
+mlflow.models.set_model(DatabricksExpertAgent)

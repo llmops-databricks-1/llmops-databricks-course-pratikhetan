@@ -3,6 +3,36 @@
 import json
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# Domain synonym expansion
+# ---------------------------------------------------------------------------
+# Maps a canonical use-case keyword to related domain terms so that
+# check_workspace_state catches resources even when names use different
+# vocabulary.  E.g. a "fraud detection" query also matches tables named
+# "transactions" or "payments".
+
+DOMAIN_SYNONYMS: dict[str, list[str]] = {
+    "fraud": ["transaction", "payment", "anomaly", "risk", "suspicious", "alert", "chargeback"],
+    "forecasting": ["sales", "demand", "inventory", "orders", "historical", "forecast"],
+    "forecast": ["sales", "demand", "inventory", "orders", "historical"],
+    "recommendation": ["product", "user", "rating", "click", "engagement", "personalization"],
+    "churn": ["retention", "customer", "subscription", "cancellation", "attrition"],
+    "etl": ["pipeline", "ingestion", "transform", "load", "extract"],
+    "streaming": ["kafka", "kinesis", "event", "realtime", "stream"],
+    "compliance": ["audit", "lineage", "governance", "access", "policy", "security"],
+    "ml": ["model", "training", "inference", "feature", "scoring"],
+    "analytics": ["reporting", "dashboard", "warehouse", "query", "insight"],
+    "inventory": ["stock", "supply", "product", "sku", "warehouse"],
+    "customer": ["user", "client", "account", "profile", "segment"],
+    "financial": ["revenue", "cost", "payment", "transaction", "ledger"],
+    "healthcare": ["patient", "clinical", "medical", "diagnosis", "treatment"],
+    "supply_chain": ["supplier", "logistics", "procurement", "shipment", "vendor"],
+}
+
+# Tables that are internal agent infrastructure and must never appear in
+# workspace state results returned to the LLM.
+_INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
+
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
 
@@ -25,17 +55,42 @@ class DatabricksExpertTools:
         self.kb_table = f"{config.catalog}.{config.schema}.databricks_knowledge_base"
         self.chunks_table = f"{config.catalog}.{config.schema}.kb_chunks"
 
-    def check_workspace_state(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Return live workspace resources that match the user's focus keywords.
+    @staticmethod
+    def _expand_keywords(keywords: list[str]) -> list[str]:
+        """Expand user keywords with domain synonyms for broader workspace matching.
 
-        Each section returns:
-          relevant: resources whose name contains at least one focus keyword.
-          total_scanned: total count of that resource type in the workspace.
-
-        If focus_keywords is empty, all resources are returned.
-        The LLM interprets relevance and uses this data to tailor recommendations.
+        E.g. ["fraud"] → ["fraud", "transaction", "payment", "anomaly", "risk", ...]
+        E.g. ["forecasting"] → ["forecasting", "sales", "demand", "inventory", ...]
         """
-        focus = [kw.lower() for kw in args.get("focus_keywords", [])]
+        expanded: set[str] = set(keywords)
+        for kw in keywords:
+            # direct key match
+            if kw in DOMAIN_SYNONYMS:
+                expanded.update(DOMAIN_SYNONYMS[kw])
+            # kw is itself a synonym — pull in the whole group
+            for canonical, synonyms in DOMAIN_SYNONYMS.items():
+                if kw in synonyms:
+                    expanded.add(canonical)
+                    expanded.update(synonyms)
+        return list(expanded)
+
+    def check_workspace_state(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Return existing workspace resources that may be relevant to the user's use case.
+
+        Results are SUPPLEMENTARY CONTEXT only — existing resources the user can
+        leverage if applicable.  They must never drive the core architecture
+        recommendation, which must come from Databricks best-practice patterns.
+
+        Keywords are automatically expanded with domain synonyms so that a
+        'fraud detection' query also matches tables named 'transactions' or
+        'payments', and a 'demand forecasting' query also matches 'sales' or
+        'inventory' tables.
+
+        Internal agent tables (kb_chunks, databricks_knowledge_base) are always
+        excluded from results.
+        """
+        raw_keywords = [kw.lower() for kw in args.get("focus_keywords", [])]
+        focus = self._expand_keywords(raw_keywords)
 
         def matches(name: str) -> bool:
             if not focus:
@@ -44,7 +99,14 @@ class DatabricksExpertTools:
             return any(kw in name_lower for kw in focus)
 
         state: dict[str, Any] = {
-            "focus_keywords_used": focus,
+            "note": (
+                "SUPPLEMENTARY CONTEXT: these are EXISTING resources in the workspace. "
+                "Mention them as 'already available and can be leveraged if applicable'. "
+                "Do NOT change your core architecture recommendation based on these names "
+                "or their medallion layer labels (bronze/silver/gold)."
+            ),
+            "focus_keywords_raw": raw_keywords,
+            "focus_keywords_expanded": focus,
             "catalog": self.cfg.catalog,
             "schema": self.cfg.schema,
         }
@@ -108,15 +170,15 @@ class DatabricksExpertTools:
             )
             table_infos = [{"name": t.name, "comment": t.comment or ""} for t in all_tables]
 
-            all_table_names = [t["name"] for t in table_infos]
+            user_tables = [t for t in table_infos if t["name"] not in _INTERNAL_TABLES]
+            all_table_names = [t["name"] for t in user_tables]
             state["tables"] = {
-                "relevant": [
+                "existing_relevant": [
                     {"name": t["name"], "comment": t["comment"]}
-                    for t in table_infos
+                    for t in user_tables
                     if matches(t["name"]) or matches(t["comment"])
                 ],
-                "all": all_table_names,
-                "total_scanned": len(table_infos),
+                "total_scanned": len(user_tables),
             }
         except Exception as exc:
             state["tables"] = {"error": str(exc)}
@@ -148,6 +210,24 @@ class DatabricksExpertTools:
         except Exception as exc:
             state["jobs"] = {"error": str(exc)}
 
+        # Summarise whether any relevant resources were actually found.
+        # The LLM uses this flag to decide whether to include an
+        # "existing resources" section in the response at all.
+        def _has_items(key: str, subkey: str) -> bool:
+            section = state.get(key, {})
+            return bool(isinstance(section, dict) and section.get(subkey))
+
+        state["has_relevant_resources"] = any(
+            [
+                _has_items("vector_search_endpoints", "relevant"),
+                _has_items("serving_endpoints", "relevant"),
+                _has_items("dlt_pipelines", "relevant"),
+                _has_items("tables", "existing_relevant"),
+                _has_items("registered_models", "relevant"),
+                _has_items("jobs", "relevant"),
+            ]
+        )
+
         return state
 
     def health_check(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -155,8 +235,7 @@ class DatabricksExpertTools:
         kb_exists = self.spark.catalog.tableExists(self.kb_table)
         chunks_exists = self.spark.catalog.tableExists(self.chunks_table)
         return {
-            "kb_table_exists": kb_exists,
-            "chunks_table_exists": chunks_exists,
+            "kb_ready": kb_exists and chunks_exists,
             "status": "ok" if kb_exists and chunks_exists else "degraded",
         }
 
@@ -173,6 +252,14 @@ class DatabricksExpertTools:
         table_name = args.get("table_name", "")
         if not table_name:
             return {"error": "table_name is required"}
+
+        # Block internal agent tables — they are never relevant to user use cases.
+        bare_name = table_name.split(".")[-1].lower()
+        if bare_name in _INTERNAL_TABLES:
+            return {
+                "error": f"'{table_name}' is an internal agent table and cannot be profiled. "
+                "Only profile tables that were returned in check_workspace_state existing_relevant results."
+            }
 
         result: dict[str, Any] = {"table_name": table_name}
 
@@ -285,17 +372,17 @@ class DatabricksExpertTools:
                     "function": {
                         "name": "check_workspace_state",
                         "description": (
-                            "Fetch live Databricks workspace inventory filtered to resources "
-                            "relevant to the user's query. "
-                            "YOU extract focus_keywords from the user's query (e.g. for "
-                            "'fraud detection streaming' use ['fraud', 'streaming', 'detection']). "
-                            "Returns, for each resource type (VS endpoints, serving endpoints, "
-                            "DLT pipelines, tables, registered models, jobs): "
-                            "  relevant: resources whose name contains a focus keyword, "
-                            "  total_scanned: total count of that type in the workspace. "
-                            "Use this for design questions so your recommendation builds on "
-                            "what already exists rather than starting from scratch. "
-                            "Call BEFORE drafting architecture options."
+                            "Discover EXISTING Databricks workspace resources that may be "
+                            "relevant to the user's use case. Results are SUPPLEMENTARY "
+                            "CONTEXT — mention them as 'already available and can be leveraged'. "
+                            "ONLY call this AFTER you have already called KB search at least once. "
+                            "Your architecture recommendation must come from KB search "
+                            "(Databricks best practices), NOT from what tables happen to exist. "
+                            "Keywords are automatically expanded with domain synonyms: "
+                            "'fraud' also matches 'transaction','payment','anomaly'; "
+                            "'forecasting' also matches 'sales','demand','inventory'. "
+                            "YOU extract focus_keywords from the user's query "
+                            "(e.g. ['fraud', 'streaming'] for a fraud detection streaming query)."
                         ),
                         "parameters": {
                             "type": "object",
@@ -327,8 +414,11 @@ class DatabricksExpertTools:
                             "Inspect a Delta table and return its schema (column names and types), "
                             "row count, last modified timestamp, null rates per column, "
                             "and 3 sample rows. "
-                            "Call this on tables returned by check_workspace_state that look "
-                            "relevant to the user's query. "
+                            "ONLY call this on tables that appeared in check_workspace_state "
+                            "existing_relevant results AND are directly relevant to the user's "
+                            "use case data (e.g. a transactions table for fraud detection). "
+                            "NEVER call this on internal tables: kb_chunks, "
+                            "databricks_knowledge_base, kb_chunks_index. "
                             "Use the results to make data-specific recommendations: "
                             "row_count drives streaming vs batch choice, "
                             "null_rates_pct reveals Silver-layer transformation needs, "
