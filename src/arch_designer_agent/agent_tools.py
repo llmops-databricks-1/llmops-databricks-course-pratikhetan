@@ -1,6 +1,8 @@
 """Custom tool handlers and ToolInfo wrappers for the Databricks Expert Assistant."""
 
 import json
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
@@ -38,6 +40,15 @@ DOMAIN_SYNONYMS: dict[str, list[str]] = {
 # Tables that are internal agent infrastructure and must never appear in
 # workspace state results returned to the LLM.
 _INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
+
+
+def _safe_json_default(obj: Any) -> str:
+    """Fallback serialiser for json.dumps — handles datetime, date, Decimal, etc."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    return str(obj)
 
 
 class DatabricksExpertTools:
@@ -349,19 +360,19 @@ class DatabricksExpertTools:
 
         def _check_workspace_state(focus_keywords: list | None = None) -> str:
             result = self.check_workspace_state({"focus_keywords": focus_keywords or []})
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=_safe_json_default)
 
         def _profile_table(table_name: str) -> str:
             result = self.profile_table({"table_name": table_name})
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=_safe_json_default)
 
         def _health_check() -> str:
             result = self.health_check({})
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=_safe_json_default)
 
         def _clarify_requirements(missing_constraints: list | None = None, query: str = "") -> str:
             result = self.clarify_requirements({"missing_constraints": missing_constraints or [], "query": query})
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, default=_safe_json_default)
 
         return [
             ToolInfo(
@@ -371,17 +382,21 @@ class DatabricksExpertTools:
                     "function": {
                         "name": "check_workspace_state",
                         "description": (
-                            "Discover EXISTING Databricks workspace resources that may be "
-                            "relevant to the user's use case. Results are SUPPLEMENTARY "
-                            "CONTEXT — mention them as 'already available and can be leveraged'. "
-                            "ONLY call this AFTER you have already called KB search at least once. "
-                            "Your architecture recommendation must come from KB search "
-                            "(Databricks best practices), NOT from what tables happen to exist. "
-                            "Keywords are automatically expanded with domain synonyms: "
+                            "CALL THIS FOR DESIGN QUERIES ONLY. "
+                            "Discovers existing Databricks workspace resources (tables, pipelines, "
+                            "models, endpoints, jobs) relevant to the user's use case. "
+                            "This is MANDATORY for any query where the user asks you to design, "
+                            "architect, build, or recommend a solution — you need to know what "
+                            "already exists before recommending what to build. "
+                            "DO NOT call this for factual/explanatory queries ('what is X', "
+                            "'explain Y', 'how does Z work'). "
+                            "Results are supplementary — mention existing resources as "
+                            "'already available and can be leveraged as X'. "
+                            "Your core architecture pattern must come from KB search, not from "
+                            "what tables happen to exist. "
+                            "Keywords are expanded with domain synonyms automatically: "
                             "'fraud' also matches 'transaction','payment','anomaly'; "
-                            "'forecasting' also matches 'sales','demand','inventory'. "
-                            "YOU extract focus_keywords from the user's query "
-                            "(e.g. ['fraud', 'streaming'] for a fraud detection streaming query)."
+                            "'streaming' also matches 'kafka','kinesis','event'."
                         ),
                         "parameters": {
                             "type": "object",
@@ -463,20 +478,21 @@ class DatabricksExpertTools:
                         "name": "clarify_requirements",
                         "description": (
                             "Ask the user for missing constraints before designing an architecture. "
-                            "Call this ONLY when the user asks for a design and has NOT specified "
-                            "ANY constraints at all — no latency, no ingestion pattern, no governance "
-                            "needs, and no cost priority. "
-                            "Do NOT call this if the user has mentioned even one constraint "
-                            "(e.g. 'low latency', 'real-time', 'compliance', 'cheap', 'streaming'). "
-                            "Do NOT call this for factual questions. "
-                            "EXAMPLES where you must NOT call this tool: "
-                            "  - 'real-time fraud detection with compliance' → has latency + governance "
-                            "  - 'batch pipeline, budget-friendly' → has ingestion + cost "
-                            "  - 'low latency ML serving' → has latency "
-                            "EXAMPLE where you MUST call this tool: "
-                            "  - 'design me a Databricks architecture' → zero constraints. "
-                            "When this tool is called, the agent will return the clarifying question "
-                            "directly to the user instead of proceeding with the design."
+                            "Call this ONLY when the query contains ZERO constraints — no mention of "
+                            "latency, speed, ingestion type, compliance, cost, team size, or scale. "
+                            "If the query contains ANY of the following words or phrases, "
+                            "do NOT call this tool and proceed directly with check_workspace_state:\n"
+                            "  Latency: real-time, near-real-time, low latency, batch, hourly, daily, weekly\n"
+                            "  Ingestion: streaming, Kafka, CDC, files, scheduled, incremental\n"
+                            "  Governance: compliance, GDPR, HIPAA, SOX, audit, access control\n"
+                            "  Cost: budget, cheap, cost-effective, affordable, small team, simple\n"
+                            "  Scale: large, small, high volume, millions, thousands\n"
+                            "Examples where you must NOT call this:\n"
+                            "  'real-time fraud detection with compliance' → real-time + compliance present\n"
+                            "  'batch pipeline, budget-friendly' → batch + budget present\n"
+                            "  'low latency ML serving' → low latency present\n"
+                            "  'small analytics team, simplicity matters' → small team + simplicity present\n"
+                            "Only call this for: 'design me a Databricks architecture' with nothing else."
                         ),
                         "parameters": {
                             "type": "object",

@@ -8,6 +8,7 @@ What Databricks services should I use for a real-time ML inference pipeline?
 How do I architect a cost-efficient data lakehouse for a small analytics team?
 Design a CDC-based ingestion pipeline from an operational database into Databricks.
 What is the difference between Delta Sync Index and Direct Access Index in Vector Search?
+Design a demand forecasting architecture on Databricks for a retail company with weekly batch predictions and seasonal data.
 What is the best way to make sourdough bread at home?
 How do I fix a memory leak in a Java application?
 Who won the FIFA World Cup in 2022?

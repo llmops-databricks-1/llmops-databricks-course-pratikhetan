@@ -56,48 +56,64 @@ class DatabricksExpertAgent(ResponsesAgent):
         "You are a Databricks Architecture Design & Optimization Agent. "
         "You help users design, evaluate, and optimize data and AI architectures "
         "on the Databricks Lakehouse Platform.\n\n"
-        "You have access to these tools — call them whenever they provide information "
-        "you cannot derive from context alone:\n"
-        "  • KB search (MCP)         — grounded evidence from Databricks documentation\n"
-        "  • check_workspace_state   — shows EXISTING resources in the user's workspace\n"
-        "  • profile_table           — schema, row count, nulls, sample rows for a Delta table\n"
-        "  • clarify_requirements    — ask the user for constraints (ONLY if none were given)\n"
-        "  • health_check            — verify KB Delta tables exist\n\n"
-        "ARCHITECTURE RECOMMENDATION RULES:\n"
-        "  1. Databricks documentation has already been retrieved for this query and is "
-        "shown in the conversation above as KB search results. Always ground your answer "
-        "in those results — cite specific service names, patterns, and configuration "
-        "options from the KB. Do not answer from training knowledge alone.\n"
-        "  2. Workspace state (check_workspace_state) is SUPPLEMENTARY CONTEXT only. "
-        "It shows what already exists and CAN be leveraged — it must never change "
-        "your core architecture pattern. Do NOT adapt medallion layer design "
-        "based on existing table names (e.g., a table named 'gold_transactions' does "
-        "not mean you should skip Bronze/Silver layers). Do NOT recommend a different "
-        "architecture because a table named 'supply_chain_risk' exists when the user "
-        "asked about fraud detection.\n"
-        "  3. Mention existing resources as: 'The workspace already has X — this can "
-        "be leveraged as [role in architecture] if applicable.' "
-        "ONLY include this section if check_workspace_state returned "
-        "has_relevant_resources=true. If has_relevant_resources=false, "
-        "skip the existing-resources section entirely — do not say 'no relevant "
-        "resources found'.\n"
-        "  4. For DESIGN questions: Databricks documentation has already been retrieved and "
-        "is shown above in the conversation. Use it as your primary source. Then call "
-        "check_workspace_state to identify existing resources, and optionally profile_table "
-        "if a specific table is directly relevant. Answer with KB-grounded architecture "
-        "first; include an existing-resources section only if has_relevant_resources=true.\n"
-        "  5. For FACTUAL questions: Databricks documentation has already been retrieved "
-        "above — answer directly from it with citations. Only call KB search again if "
-        "you need information on a different topic.\n"
-        "  6. CITATIONS ARE MANDATORY: For every KB result you use, include the source "
-        "as a markdown hyperlink using the exact URL from the KB result. Format: "
-        "[title or description](url). If a KB result lists a GitHub repo or docs page, "
-        "link to it directly. Never omit sources.\n"
-        "  7. NEVER include tool calls in your final text answer. Never write sentences "
-        "like 'let me check...' or 'let\\'s check existing resources...' in your answer. "
-        "If you need to call a tool, do it using the structured tool-calling interface "
-        "BEFORE writing your final answer — not inside it.\n\n"
-        "Always ground your answer in the KB results shown above. Never invent Databricks features."
+        "## STEP 1 — CLASSIFY THE QUERY\n\n"
+        "Before doing anything, classify the query as exactly one of:\n\n"
+        "**DESIGN** — user wants you to design, architect, build, or recommend a solution. "
+        "Trigger words: 'design', 'architect', 'build', 'implement', 'set up', "
+        "'how should I', 'what architecture', 'recommend', 'create a pipeline'.\n\n"
+        "**FACTUAL** — user wants an explanation or definition of a concept. "
+        "Trigger words: 'what is', 'explain', 'how does', 'when should I use', "
+        "'what is the difference'.\n\n"
+        "---\n\n"
+        "## STEP 2 — CALL TOOLS (before writing any answer)\n\n"
+        "Databricks documentation has already been retrieved and is shown above as KB results. "
+        "DO NOT call the KB search tool again under any circumstances — it has already run.\n\n"
+        "**IF DESIGN — follow these steps in strict order, one tool call per iteration:**\n\n"
+        "  STEP 2a. Check if the query mentions ANY of: latency, speed, real-time, batch, "
+        "streaming, compliance, cost, budget, team size, scale. "
+        "If none → call clarify_requirements, then stop. "
+        "If at least one → go to STEP 2b.\n\n"
+        "  STEP 2b. Call check_workspace_state with relevant keywords. "
+        "This is MANDATORY. Output ONLY this tool call — no text, no answer.\n\n"
+        "  STEP 2c. After check_workspace_state returns, read the existing_relevant field:\n"
+        "     - If existing_relevant is non-empty → your ONLY output for this iteration "
+        "is a profile_table tool call on the most relevant entry. "
+        "DO NOT write any answer text yet. The answer comes after profile_table returns.\n"
+        "     - If existing_relevant is empty → skip to STEP 3 and write your answer.\n\n"
+        "  STEP 2d. After profile_table returns → write your answer (STEP 3).\n\n"
+        "**IF FACTUAL:**\n"
+        "  Do NOT call any tools. Answer directly from the KB results shown above.\n\n"
+        "---\n\n"
+        "## STEP 3 — WRITE THE ANSWER\n\n"
+        "**ALL answers — CITATIONS ARE MANDATORY:**\n"
+        "  The KB results shown above contain a 'url' field on every entry. "
+        "You MUST cite every source you use. Write [description](url) inline in the text. "
+        "You MUST end every answer with a '## References' section that lists every URL used. "
+        "FORMAT: '- [Page title](url)' — one line per source. "
+        "An answer missing inline citations OR missing the ## References section is WRONG.\n\n"
+        "  - Ground every claim in the KB results. Never invent Databricks features.\n"
+        "  - NEVER write: 'let me check', 'I would like to inspect', 'I can call', "
+        "'before proceeding', 'would you like', 'to further optimize ... I would like to'. "
+        "NEVER end with a follow-up question. NEVER ask the user for more information.\n\n"
+        "**DESIGN answers only — strict two-part structure:**\n\n"
+        "  PART 1 — ## Architecture\n"
+        "  Write the complete architecture as if the workspace is completely empty. "
+        "DO NOT mention any existing table, pipeline, or model names anywhere in Part 1. "
+        "Every claim must cite a KB url. Every component must reference a Databricks service.\n\n"
+        "  PART 2 — ## Existing Resources in Your Workspace\n"
+        "  Include ONLY if has_relevant_resources=true from check_workspace_state.\n"
+        "  For each profiled table, include a data-informed summary:\n"
+        "  - **<name>** (<row_count> rows, last modified <date>): can be utilized as [role].\n"
+        "  - Key columns: list the columns most relevant to the use case from profile_table.\n"
+        "  - Data quality: note any columns with null rates >10%% from null_rates_pct.\n"
+        "  - Insight: one sentence connecting a profile_table finding to an architecture decision\n"
+        "    (e.g. 'row_count of 10M+ supports the streaming ingestion recommendation above').\n"
+        "  For resources that were NOT profiled (endpoints, pipelines, models, jobs), list as:\n"
+        "  - **<name>**: already exists — can be leveraged as [role].\n"
+        "  If has_relevant_resources=false → omit this section entirely. "
+        "Do NOT write 'no existing resources were found' or anything similar.\n\n"
+        "  ## References\n"
+        "  List every URL cited above. This section is REQUIRED in every answer."
     )
 
     def __init__(
@@ -338,65 +354,53 @@ class DatabricksExpertAgent(ResponsesAgent):
             if not message.tool_calls:
                 final_answer = message.content or ""
 
-                # Guard: detect when the LLM writes a tool call as plain text
-                # instead of using the structured tool-calling interface.
-                # Catches calls at start, middle, or end of the response
-                # e.g. '[check_workspace_state(...)]' appended after the answer.
+                # Guard: empty response — re-prompt once.
+                if not final_answer.strip():
+                    logger.warning("  LLM returned empty content — re-prompting for answer.")
+                    messages.append({"role": "assistant", "content": ""})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous response was empty. "
+                                "Based on the KB results and workspace state above, "
+                                "please write your complete answer now."
+                            ),
+                        }
+                    )
+                    continue
+
+                # Guard: LLM wrote a tool call as plain text instead of using the
+                # structured interface.  Use the structured tool-calling interface
+                # to actually run it so the loop continues properly.
                 tool_names = self.registry.list_tools()
                 _plain_text_tool = next(
                     (name for name in tool_names if re.search(rf"\b{re.escape(name)}\s*\(", final_answer)),
                     None,
                 )
                 if _plain_text_tool:
-                    # Strip everything from the tool call onward — often the answer
-                    # itself is complete and only the trailing narration is wrong.
-                    _cut = re.search(rf"[\[\(]?\b{re.escape(_plain_text_tool)}\s*\(", final_answer)
-                    # Also strip any lead-in sentence like "let's check..." before the tool call
-                    _lead_in = (
-                        re.search(
-                            r"\n*[^\n]*(?:let(?:'s| me| us)|to (?:further|also|check)|now (?:let|check))[^\n]*$",
-                            final_answer[: _cut.start()],
-                            re.IGNORECASE,
-                        )
-                        if _cut
-                        else None
-                    )
-                    cut_at = _lead_in.start() if _lead_in else (_cut.start() if _cut else len(final_answer))
-                    clean_answer = final_answer[:cut_at].rstrip()
-                    if clean_answer:
-                        # The answer before the tool call is valid — return it directly.
-                        logger.warning(
-                            f"  LLM appended plain-text tool call ({_plain_text_tool}) after answer — trimmed."
-                        )
-                        messages.append({"role": "assistant", "content": clean_answer})
-                        if conversation_id and self._memory:
-                            self._save_memory(conversation_id, messages[save_from_index:])
-                        return clean_answer
-                    # No valid answer before the tool call — re-prompt to use structured interface.
                     logger.warning(
-                        "  LLM returned a tool call as plain text — re-prompting to use "
-                        "the structured tool-calling interface."
+                        f"  LLM wrote plain-text tool call ({_plain_text_tool}) — executing via structured interface."
                     )
                     messages.append({"role": "assistant", "content": final_answer})
                     messages.append(
                         {
                             "role": "user",
                             "content": (
-                                "You must call tools using the structured tool-calling interface, "
-                                "not by writing the call as plain text. "
-                                "Please call the tool now using the proper tool-calling mechanism."
+                                f"You tried to call {_plain_text_tool} as plain text. "
+                                "Call it now using the structured tool-calling interface."
                             ),
                         }
                     )
                     continue
 
-                # LLM is done — return the final answer
+                # LLM is done — return the final answer.
                 messages.append({"role": "assistant", "content": final_answer})
                 if conversation_id and self._memory:
                     self._save_memory(conversation_id, messages[save_from_index:])
                 return final_answer
 
-            # LLM wants to call one or more tools — execute them.
+            # LLM made structured tool calls — execute them all.
             messages.append(
                 {
                     "role": "assistant",
@@ -405,10 +409,7 @@ class DatabricksExpertAgent(ResponsesAgent):
                         {
                             "id": tc.id,
                             "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
                         }
                         for tc in message.tool_calls
                     ],
@@ -423,9 +424,6 @@ class DatabricksExpertAgent(ResponsesAgent):
                 try:
                     result = self._execute_tool(tool_name, tool_args)
                 except Exception as exc:
-                    # Unwrap ExceptionGroup (Python 3.11+ TaskGroup errors) so the
-                    # real cause is visible in logs rather than "unhandled errors in
-                    # a TaskGroup (1 sub-exception)".
                     cause = exc
                     if hasattr(exc, "exceptions") and exc.exceptions:
                         cause = exc.exceptions[0]
@@ -442,6 +440,55 @@ class DatabricksExpertAgent(ResponsesAgent):
                         "content": str(result),
                     }
                 )
+
+                # After check_workspace_state: auto-call profile_table if relevant
+                # tables exist.  The LLM inconsistently skips this step, so we
+                # enforce it here in Python.
+                if tool_name == "check_workspace_state":
+                    try:
+                        ws_state = json.loads(str(result)) if isinstance(result, str) else result
+                        relevant_tables = (
+                            ws_state.get("tables", {}).get("existing_relevant", [])
+                            if isinstance(ws_state, dict)
+                            else []
+                        )
+                        logger.info(f"  → check_workspace_state: {len(relevant_tables)} relevant table(s)")
+                        if relevant_tables:
+                            top_table = relevant_tables[0]["name"]
+                            full_table_name = f"{self.cfg.catalog}.{self.cfg.schema}.{top_table}"
+                            logger.info(f"  → Auto-calling profile_table for '{full_table_name}'")
+                            profile_id = f"auto_profile_{uuid4().hex[:8]}"
+                            profile_args = {"table_name": full_table_name}
+                            try:
+                                profile_result = self._execute_tool("profile_table", profile_args)
+                            except Exception as pexc:
+                                profile_result = f"Error profiling table: {pexc}"
+                                logger.warning(str(profile_result))
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "id": profile_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": "profile_table",
+                                                "arguments": json.dumps(profile_args),
+                                            },
+                                        }
+                                    ],
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": profile_id,
+                                    "content": str(profile_result),
+                                }
+                            )
+                    except Exception as parse_exc:
+                        logger.info(f"  Auto profile_table skipped: {parse_exc}")
 
         if conversation_id and self._memory:
             self._save_memory(conversation_id, messages[save_from_index:])

@@ -30,14 +30,9 @@ class ProjectConfig(BaseModel):
         default="/Shared/arch-designer-agent",
         description="MLflow experiment path for evaluation and model logging",
     )
-    system_prompt: str = Field(
-        default=(
-            "You are a Databricks Architecture Design & Optimization Agent."
-            " You help users design, evaluate, and optimize data and AI"
-            " architectures, and provide performance and best practice"
-            " guidance for the Databricks Lakehouse Platform."
-        ),
-        description="System prompt for the agent",
+    system_prompt: str | None = Field(
+        default=None,
+        description="System prompt for the agent (uses agent DEFAULT_SYSTEM_PROMPT when not set)",
     )
 
     model_config = {"populate_by_name": True}
