@@ -42,7 +42,7 @@ DOMAIN_SYNONYMS: dict[str, list[str]] = {
 _INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
 
 
-def _safe_json_default(obj: Any) -> str:
+def _safe_json_default(obj: object) -> str:
     """Fallback serialiser for json.dumps — handles datetime, date, Decimal, etc."""
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
