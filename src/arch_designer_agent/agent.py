@@ -105,12 +105,24 @@ class DatabricksExpertAgent(ResponsesAgent):
         "  Constraint map — when the user says → you MUST / MUST NOT:\n\n"
         "  | User says | MUST use | MUST NOT use |\n"
         "  |---|---|---|\n"
-        "  | batch, scheduled, weekly, daily | Databricks Jobs, spark.read, COPY INTO, scheduled SQL | Autoloader, Structured Streaming, Kafka, real-time, streaming triggers |\n"
-        "  | real-time, streaming, low latency | Structured Streaming, Autoloader, Delta Live Tables, Kafka | Scheduled Jobs-only batch, COPY INTO for real-time |\n"
-        "  | simplicity, small team | SQL Warehouse, Databricks SQL, Jobs UI, single notebooks | Multi-service streaming, Kafka, complex orchestration, microservices |\n"
-        "  | budget, cost, cheap | Serverless SQL, spot/photon, auto-terminate, Jobs (no always-on) | Provisioned throughput, always-on endpoints, premium tiers |\n"
-        "  | compliance, governance, audit | Unity Catalog, row/column security, audit logs, lineage | Open-access patterns without governance |\n"
-        "  | scale, high volume, millions | Auto-scaling clusters, Photon, Z-order, liquid clustering | Single-node, pandas-only approaches |\n\n"
+        "  | batch, scheduled, weekly, daily"
+        " | Databricks Jobs, spark.read, COPY INTO, scheduled SQL"
+        " | Autoloader, Structured Streaming, Kafka, real-time, streaming triggers |\n"
+        "  | real-time, streaming, low latency"
+        " | Structured Streaming, Autoloader, Delta Live Tables, Kafka"
+        " | Scheduled Jobs-only batch, COPY INTO for real-time |\n"
+        "  | simplicity, small team"
+        " | SQL Warehouse, Databricks SQL, Jobs UI, single notebooks"
+        " | Multi-service streaming, Kafka, complex orchestration, microservices |\n"
+        "  | budget, cost, cheap"
+        " | Serverless SQL, spot/photon, auto-terminate, Jobs (no always-on)"
+        " | Provisioned throughput, always-on endpoints, premium tiers |\n"
+        "  | compliance, governance, audit"
+        " | Unity Catalog, row/column security, audit logs, lineage"
+        " | Open-access patterns without governance |\n"
+        "  | scale, high volume, millions"
+        " | Auto-scaling clusters, Photon, Z-order, liquid clustering"
+        " | Single-node, pandas-only approaches |\n\n"
         "  If multiple constraints are present, apply ALL of them (intersection).\n"
         "  Example: 'batch + simplicity + budget' → use scheduled Databricks Jobs +\n"
         "  SQL Warehouse + spark.read; NEVER mention Autoloader, streaming, Kafka,\n"
@@ -279,24 +291,22 @@ class DatabricksExpertAgent(ResponsesAgent):
         is false..." or "No existing resources were found...").
         """
         # --- Pass 1: strip the ## Existing Resources heading + empty body ---
-        lines = answer.split('\n')
+        lines = answer.split("\n")
         start = None
         end = None
         for i, line in enumerate(lines):
-            if line.strip().startswith('## Existing Resources'):
+            if line.strip().startswith("## Existing Resources"):
                 start = i
-            elif start is not None and line.strip().startswith('## '):
+            elif start is not None and line.strip().startswith("## "):
                 end = i
                 break
         if start is not None:
             if end is None:
                 end = len(lines)
-            section = '\n'.join(lines[start:end]).lower()
-            has_real_data = any(kw in section for kw in [
-                "rows,", "key columns", "null rate", "can be utilized as"
-            ])
+            section = "\n".join(lines[start:end]).lower()
+            has_real_data = any(kw in section for kw in ["rows,", "key columns", "null rate", "can be utilized as"])
             if not has_real_data:
-                answer = '\n'.join(lines[:start] + lines[end:])
+                answer = "\n".join(lines[:start] + lines[end:])
 
         # --- Pass 2: strip inline "no resources" sentences ---
         for pattern in DatabricksExpertAgent._NO_RESOURCES_PATTERNS:

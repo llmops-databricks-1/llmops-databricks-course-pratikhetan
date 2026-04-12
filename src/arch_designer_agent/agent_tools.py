@@ -50,8 +50,14 @@ _INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
 # resource types (pipelines, jobs, endpoints, etc.).  Any resource whose name
 # contains one of these (case-insensitive) is silently excluded from results.
 _INTERNAL_RESOURCE_SUBSTRINGS = {
-    "kb-pipeline", "kb_pipeline", "kb_chunks", "knowledge_base",
-    "knowledge-base", "llmops_course", "online_index_view", "event_log_",
+    "kb-pipeline",
+    "kb_pipeline",
+    "kb_chunks",
+    "knowledge_base",
+    "knowledge-base",
+    "llmops_course",
+    "online_index_view",
+    "event_log_",
 }
 
 # Keywords that are too generic for substring matching and cause false
@@ -59,11 +65,34 @@ _INTERNAL_RESOURCE_SUBSTRINGS = {
 # every registered model.  These are removed from the expanded keyword set
 # BEFORE the matches() function runs.
 _MATCHING_STOP_WORDS = {
-    "pipeline", "model", "table", "data", "job", "endpoint",
-    "notebook", "cluster", "warehouse", "schema", "catalog",
-    "query", "ingestion", "transform", "load", "extract",
-    "training", "inference", "scoring", "reporting", "dashboard",
-    "batch", "etl", "ml", "ai", "dev", "prod", "test",
+    "pipeline",
+    "model",
+    "table",
+    "data",
+    "job",
+    "endpoint",
+    "notebook",
+    "cluster",
+    "warehouse",
+    "schema",
+    "catalog",
+    "query",
+    "ingestion",
+    "transform",
+    "load",
+    "extract",
+    "training",
+    "inference",
+    "scoring",
+    "reporting",
+    "dashboard",
+    "batch",
+    "etl",
+    "ml",
+    "ai",
+    "dev",
+    "prod",
+    "test",
 }
 
 # Prompt template for LLM-powered keyword expansion
@@ -127,9 +156,7 @@ class DatabricksExpertTools:
     # Keyword expansion — LLM-powered with static fallback
     # ------------------------------------------------------------------
 
-    def _llm_expand_keywords(
-        self, raw_keywords: list[str], user_query: str = ""
-    ) -> list[str]:
+    def _llm_expand_keywords(self, raw_keywords: list[str], user_query: str = "") -> list[str]:
         """Use the LLM to dynamically generate relevant search keywords.
 
         Calls the configured LLM endpoint with a structured prompt to produce
@@ -174,9 +201,7 @@ class DatabricksExpertTools:
                     expanded.update(synonyms)
         return expanded
 
-    def _expand_keywords(
-        self, keywords: list[str], user_query: str = ""
-    ) -> list[str]:
+    def _expand_keywords(self, keywords: list[str], user_query: str = "") -> list[str]:
         """Expand user keywords with LLM-powered + static synonym expansion.
 
         Pipeline:
@@ -204,9 +229,7 @@ class DatabricksExpertTools:
         before_count = len(expanded)
         expanded -= _MATCHING_STOP_WORDS
         if before_count != len(expanded):
-            logger.info(
-                f"  Removed {before_count - len(expanded)} stop word(s) from expanded keywords"
-            )
+            logger.info(f"  Removed {before_count - len(expanded)} stop word(s) from expanded keywords")
 
         logger.info(
             f"  Keyword expansion: raw={keywords} → split={all_words} "
@@ -311,8 +334,7 @@ class DatabricksExpertTools:
             table_infos = [{"name": t.name, "comment": t.comment or ""} for t in all_tables]
 
             user_tables = [
-                t for t in table_infos
-                if t["name"] not in _INTERNAL_TABLES and not _is_internal_resource(t["name"])
+                t for t in table_infos if t["name"] not in _INTERNAL_TABLES and not _is_internal_resource(t["name"])
             ]
             state["tables"] = {
                 "existing_relevant": [
@@ -329,9 +351,7 @@ class DatabricksExpertTools:
             all_models = list(self.w.registered_models.list(catalog_name=self.cfg.catalog, schema_name=self.cfg.schema))
             state["registered_models"] = {
                 "relevant": [
-                    {"name": m.name}
-                    for m in all_models
-                    if matches(m.name) and not _is_internal_resource(m.name)
+                    {"name": m.name} for m in all_models if matches(m.name) and not _is_internal_resource(m.name)
                 ],
                 "total_scanned": len(all_models),
             }
@@ -349,8 +369,7 @@ class DatabricksExpertTools:
                         else "manual",
                     }
                     for j in all_jobs
-                    if j.settings and matches(j.settings.name)
-                    and not _is_internal_resource(j.settings.name)
+                    if j.settings and matches(j.settings.name) and not _is_internal_resource(j.settings.name)
                 ],
                 "total_scanned": len(all_jobs),
             }
