@@ -1,23 +1,28 @@
 """Custom tool handlers and ToolInfo wrappers for the Databricks Expert Assistant."""
 
 import json
+import re
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
+from loguru import logger
 from pyspark.sql import SparkSession
 
 from arch_designer_agent.config import ProjectConfig
 from arch_designer_agent.mcp import ToolInfo
 
 # ---------------------------------------------------------------------------
-# Domain synonym expansion
+# Domain synonym expansion (static fallback)
 # ---------------------------------------------------------------------------
 # Maps a canonical use-case keyword to related domain terms so that
 # check_workspace_state catches resources even when names use different
 # vocabulary.  E.g. a "fraud detection" query also matches tables named
 # "transactions" or "payments".
+#
+# This dictionary is used as a FAST FALLBACK when the LLM-powered keyword
+# expansion is unavailable or fails.
 
 DOMAIN_SYNONYMS: dict[str, list[str]] = {
     "fraud": ["transaction", "payment", "anomaly", "risk", "suspicious", "alert", "chargeback"],
@@ -41,6 +46,52 @@ DOMAIN_SYNONYMS: dict[str, list[str]] = {
 # workspace state results returned to the LLM.
 _INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
 
+# Substrings that identify internal agent infrastructure resources across ALL
+# resource types (pipelines, jobs, endpoints, etc.).  Any resource whose name
+# contains one of these (case-insensitive) is silently excluded from results.
+_INTERNAL_RESOURCE_SUBSTRINGS = {
+    "kb-pipeline", "kb_pipeline", "kb_chunks", "knowledge_base",
+    "knowledge-base", "llmops_course", "online_index_view", "event_log_",
+}
+
+# Keywords that are too generic for substring matching and cause false
+# positives.  E.g. "pipeline" matches every pipeline name, "model" matches
+# every registered model.  These are removed from the expanded keyword set
+# BEFORE the matches() function runs.
+_MATCHING_STOP_WORDS = {
+    "pipeline", "model", "table", "data", "job", "endpoint",
+    "notebook", "cluster", "warehouse", "schema", "catalog",
+    "query", "ingestion", "transform", "load", "extract",
+    "training", "inference", "scoring", "reporting", "dashboard",
+    "batch", "etl", "ml", "ai", "dev", "prod", "test",
+}
+
+# Prompt template for LLM-powered keyword expansion
+_KEYWORD_EXPANSION_PROMPT = """\
+You are a keyword expansion engine for searching Databricks workspace resources.
+
+Given a user's use-case description and initial keywords, generate a flat JSON \
+array of **single-word, lowercase** search terms that are likely to appear in \
+table names, pipeline names, model names, or job names for this use case.
+
+Include:
+- Domain-specific entity names (e.g. "transactions", "patients", "orders")
+- Common abbreviations (e.g. "txn", "inv", "sku")
+- Related data concepts (e.g. "revenue" for a sales forecasting use case)
+- Singular AND plural forms if commonly used in naming
+
+Do NOT include:
+- Multi-word phrases
+- Generic Databricks terms (e.g. "delta", "spark", "notebook", "pipeline",
+  "model", "table", "data", "job", "endpoint", "cluster", "warehouse",
+  "batch", "etl", "ml", "training", "inference", "ingestion")
+- Stop words (e.g. "the", "and", "for")
+
+User query: {user_query}
+Initial keywords: {keywords}
+
+Return ONLY a valid JSON array of strings. No explanation, no markdown fences."""
+
 
 def _safe_json_default(obj: object) -> str:
     """Fallback serialiser for json.dumps — handles datetime, date, Decimal, etc."""
@@ -49,6 +100,12 @@ def _safe_json_default(obj: object) -> str:
     if isinstance(obj, Decimal):
         return float(obj)
     return str(obj)
+
+
+def _is_internal_resource(name: str) -> bool:
+    """Return True if the resource name matches internal agent infrastructure."""
+    name_lower = name.lower()
+    return any(pat in name_lower for pat in _INTERNAL_RESOURCE_SUBSTRINGS)
 
 
 class DatabricksExpertTools:
@@ -66,23 +123,95 @@ class DatabricksExpertTools:
         self.kb_table = f"{config.catalog}.{config.schema}.databricks_knowledge_base"
         self.chunks_table = f"{config.catalog}.{config.schema}.kb_chunks"
 
-    @staticmethod
-    def _expand_keywords(keywords: list[str]) -> list[str]:
-        """Expand user keywords with domain synonyms for broader workspace matching.
+    # ------------------------------------------------------------------
+    # Keyword expansion — LLM-powered with static fallback
+    # ------------------------------------------------------------------
 
-        E.g. ["fraud"] → ["fraud", "transaction", "payment", "anomaly", "risk", ...]
-        E.g. ["forecasting"] → ["forecasting", "sales", "demand", "inventory", ...]
+    def _llm_expand_keywords(
+        self, raw_keywords: list[str], user_query: str = ""
+    ) -> list[str]:
+        """Use the LLM to dynamically generate relevant search keywords.
+
+        Calls the configured LLM endpoint with a structured prompt to produce
+        domain-aware, single-word search terms.  Falls back to an empty list
+        on any failure (caller should combine with static expansion).
         """
-        expanded: set[str] = set(keywords)
+        try:
+            llm_client = self.w.serving_endpoints.get_open_ai_client()
+            prompt = _KEYWORD_EXPANSION_PROMPT.format(
+                user_query=user_query,
+                keywords=json.dumps(raw_keywords),
+            )
+            response = llm_client.chat.completions.create(
+                model=self.cfg.llm_endpoint,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=300,
+            )
+            content = response.choices[0].message.content.strip()
+            # Strip markdown fences if the model wraps the response
+            content = re.sub(r"^```(?:json)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content)
+            keywords = json.loads(content)
+            if isinstance(keywords, list):
+                result = [str(k).lower().strip() for k in keywords if isinstance(k, str)]
+                logger.info(f"  LLM keyword expansion: {raw_keywords} → {result}")
+                return result
+        except Exception as exc:
+            logger.warning(f"  LLM keyword expansion failed ({exc}); using static fallback")
+        return []
+
+    @staticmethod
+    def _static_expand_keywords(keywords: list[str]) -> set[str]:
+        """Expand keywords using the static DOMAIN_SYNONYMS dictionary."""
+        expanded: set[str] = set()
         for kw in keywords:
-            # direct key match
             if kw in DOMAIN_SYNONYMS:
                 expanded.update(DOMAIN_SYNONYMS[kw])
-            # kw is itself a synonym — pull in the whole group
             for canonical, synonyms in DOMAIN_SYNONYMS.items():
                 if kw in synonyms:
                     expanded.add(canonical)
                     expanded.update(synonyms)
+        return expanded
+
+    def _expand_keywords(
+        self, keywords: list[str], user_query: str = ""
+    ) -> list[str]:
+        """Expand user keywords with LLM-powered + static synonym expansion.
+
+        Pipeline:
+        1. Split multi-word keywords into individual words
+           ("demand forecasting" → ["demand", "forecasting"])
+        2. Apply static DOMAIN_SYNONYMS as a fast baseline
+        3. Call the LLM for dynamic, context-aware expansion
+        4. Combine, deduplicate, and remove stop words
+        """
+        # Step 1: split compound keywords into individual words
+        split_keywords: set[str] = set()
+        for kw in keywords:
+            split_keywords.update(word.lower() for word in kw.split() if word)
+        all_words = list(split_keywords)
+
+        # Step 2: static expansion (fast, no network call)
+        expanded: set[str] = set(all_words)
+        expanded.update(self._static_expand_keywords(all_words))
+
+        # Step 3: LLM expansion (dynamic, handles any domain)
+        llm_keywords = self._llm_expand_keywords(all_words, user_query=user_query)
+        expanded.update(llm_keywords)
+
+        # Step 4: remove stop words that cause false-positive matches
+        before_count = len(expanded)
+        expanded -= _MATCHING_STOP_WORDS
+        if before_count != len(expanded):
+            logger.info(
+                f"  Removed {before_count - len(expanded)} stop word(s) from expanded keywords"
+            )
+
+        logger.info(
+            f"  Keyword expansion: raw={keywords} → split={all_words} "
+            f"→ final={sorted(expanded)} ({len(expanded)} terms)"
+        )
         return list(expanded)
 
     def check_workspace_state(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -92,16 +221,16 @@ class DatabricksExpertTools:
         leverage if applicable.  They must never drive the core architecture
         recommendation, which must come from Databricks best-practice patterns.
 
-        Keywords are automatically expanded with domain synonyms so that a
-        'fraud detection' query also matches tables named 'transactions' or
-        'payments', and a 'demand forecasting' query also matches 'sales' or
-        'inventory' tables.
+        Keywords are automatically expanded using LLM-powered synonym generation
+        and a static domain dictionary, so that a 'demand forecasting' query also
+        matches 'sales' or 'inventory' tables.
 
-        Internal agent tables (kb_chunks, databricks_knowledge_base) are always
+        Internal agent resources (kb_chunks, kb-pipeline, etc.) are always
         excluded from results.
         """
         raw_keywords = [kw.lower() for kw in args.get("focus_keywords", [])]
-        focus = self._expand_keywords(raw_keywords)
+        user_query = args.get("user_query", "")
+        focus = self._expand_keywords(raw_keywords, user_query=user_query)
 
         def matches(name: str) -> bool:
             if not focus:
@@ -131,7 +260,7 @@ class DatabricksExpertTools:
                         "state": str(e.endpoint_status.state) if e.endpoint_status else "unknown",
                     }
                     for e in all_vs
-                    if matches(e.name)
+                    if matches(e.name) and not _is_internal_resource(e.name)
                 ],
                 "total_scanned": len(all_vs),
             }
@@ -147,7 +276,7 @@ class DatabricksExpertTools:
                         "state": str(e.state.config_update) if e.state else "unknown",
                     }
                     for e in all_se
-                    if matches(e.name)
+                    if matches(e.name) and not _is_internal_resource(e.name)
                 ],
                 "total_scanned": len(all_se),
             }
@@ -163,7 +292,7 @@ class DatabricksExpertTools:
                         "state": str(p.latest_updates[0].state) if p.latest_updates else "no_runs",
                     }
                     for p in all_dlt
-                    if p.name and matches(p.name)
+                    if p.name and matches(p.name) and not _is_internal_resource(p.name)
                 ],
                 "total_scanned": len(all_dlt),
             }
@@ -181,7 +310,10 @@ class DatabricksExpertTools:
             )
             table_infos = [{"name": t.name, "comment": t.comment or ""} for t in all_tables]
 
-            user_tables = [t for t in table_infos if t["name"] not in _INTERNAL_TABLES]
+            user_tables = [
+                t for t in table_infos
+                if t["name"] not in _INTERNAL_TABLES and not _is_internal_resource(t["name"])
+            ]
             state["tables"] = {
                 "existing_relevant": [
                     {"name": t["name"], "comment": t["comment"]}
@@ -196,7 +328,11 @@ class DatabricksExpertTools:
         try:
             all_models = list(self.w.registered_models.list(catalog_name=self.cfg.catalog, schema_name=self.cfg.schema))
             state["registered_models"] = {
-                "relevant": [{"name": m.name} for m in all_models if matches(m.name)],
+                "relevant": [
+                    {"name": m.name}
+                    for m in all_models
+                    if matches(m.name) and not _is_internal_resource(m.name)
+                ],
                 "total_scanned": len(all_models),
             }
         except Exception as exc:
@@ -214,20 +350,24 @@ class DatabricksExpertTools:
                     }
                     for j in all_jobs
                     if j.settings and matches(j.settings.name)
+                    and not _is_internal_resource(j.settings.name)
                 ],
                 "total_scanned": len(all_jobs),
             }
         except Exception as exc:
             state["jobs"] = {"error": str(exc)}
 
-        # Summarise whether any relevant resources were actually found.
-        # The LLM uses this flag to decide whether to include an
-        # "existing resources" section in the response at all.
+        # ------------------------------------------------------------------
+        # Build a natural-language resource summary for the LLM.
+        # The LLM reads "resource_summary" directly — it should NEVER
+        # reference internal field names like "has_relevant_resources" in
+        # its answer to the user.
+        # ------------------------------------------------------------------
         def _has_items(key: str, subkey: str) -> bool:
             section = state.get(key, {})
             return bool(isinstance(section, dict) and section.get(subkey))
 
-        state["has_relevant_resources"] = any(
+        has_resources = any(
             [
                 _has_items("vector_search_endpoints", "relevant"),
                 _has_items("serving_endpoints", "relevant"),
@@ -237,6 +377,38 @@ class DatabricksExpertTools:
                 _has_items("jobs", "relevant"),
             ]
         )
+
+        # Keep the boolean for programmatic use (e.g. _strip_empty_resources_section)
+        state["has_relevant_resources"] = has_resources
+
+        if has_resources:
+            # Collect names of all matched resources for a quick summary
+            found_names = []
+            for key, subkey in [
+                ("tables", "existing_relevant"),
+                ("serving_endpoints", "relevant"),
+                ("dlt_pipelines", "relevant"),
+                ("vector_search_endpoints", "relevant"),
+                ("registered_models", "relevant"),
+                ("jobs", "relevant"),
+            ]:
+                section = state.get(key, {})
+                if isinstance(section, dict):
+                    for item in section.get(subkey, []):
+                        found_names.append(item.get("name", "unknown"))
+            state["resource_summary"] = (
+                f"FOUND {len(found_names)} existing resource(s) that may be relevant: "
+                f"{', '.join(found_names)}. "
+                "Include an '## Existing Resources in Your Workspace' section in your "
+                "answer describing how these can be leveraged."
+            )
+        else:
+            state["resource_summary"] = (
+                "NO existing resources matched this use case. "
+                "Do NOT include any 'Existing Resources' section in your answer. "
+                "Do NOT mention the absence of resources — simply skip to ## References. "
+                "Write only the ## Architecture and ## References sections."
+            )
 
         return state
 
@@ -265,7 +437,7 @@ class DatabricksExpertTools:
 
         # Block internal agent tables — they are never relevant to user use cases.
         bare_name = table_name.split(".")[-1].lower()
-        if bare_name in _INTERNAL_TABLES:
+        if bare_name in _INTERNAL_TABLES or _is_internal_resource(bare_name):
             return {
                 "error": f"'{table_name}' is an internal agent table and cannot be profiled. "
                 "Only profile tables that were returned in check_workspace_state existing_relevant results."
@@ -394,9 +566,10 @@ class DatabricksExpertTools:
                             "'already available and can be leveraged as X'. "
                             "Your core architecture pattern must come from KB search, not from "
                             "what tables happen to exist. "
-                            "Keywords are expanded with domain synonyms automatically: "
-                            "'fraud' also matches 'transaction','payment','anomaly'; "
-                            "'streaming' also matches 'kafka','kinesis','event'."
+                            "Keywords are expanded AUTOMATICALLY using LLM-powered synonym "
+                            "generation — pass the most relevant individual words from the "
+                            "user's query. Use SINGLE WORDS, not phrases: "
+                            "e.g. ['demand', 'forecasting', 'retail'] not ['demand forecasting']."
                         ),
                         "parameters": {
                             "type": "object",
@@ -405,10 +578,13 @@ class DatabricksExpertTools:
                                     "type": "array",
                                     "items": {"type": "string"},
                                     "description": (
-                                        "Keywords extracted from the user query to filter "
-                                        "workspace resources by name. "
-                                        "E.g. ['fraud', 'streaming', 'model'] for a fraud "
-                                        "detection streaming query."
+                                        "Individual keywords extracted from the user query to "
+                                        "filter workspace resources by name. Use SINGLE WORDS "
+                                        "only — multi-word phrases will be split automatically. "
+                                        "E.g. ['fraud', 'detection', 'streaming'] for a fraud "
+                                        "detection streaming query. "
+                                        "E.g. ['demand', 'forecasting', 'sales', 'retail'] for "
+                                        "a retail demand forecasting query."
                                     ),
                                 },
                             },

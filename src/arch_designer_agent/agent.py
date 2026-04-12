@@ -95,23 +95,51 @@ class DatabricksExpertAgent(ResponsesAgent):
         "  - NEVER write: 'let me check', 'I would like to inspect', 'I can call', "
         "'before proceeding', 'would you like', 'to further optimize ... I would like to'. "
         "NEVER end with a follow-up question. NEVER ask the user for more information.\n\n"
-        "**DESIGN answers only — strict two-part structure:**\n\n"
+        "**DESIGN answers only — constraint-aware, strict structure:**\n\n"
+        "  CONSTRAINT FILTERING (MANDATORY — do this before writing anything):\n"
+        "  1. Extract the user's explicit constraints from their query.\n"
+        "  2. Use the constraint map below as a HARD FILTER on every recommendation.\n"
+        "     Every component you recommend MUST be compatible with ALL stated constraints.\n"
+        "     If a KB result mentions a technology that conflicts with a constraint,\n"
+        "     do NOT include it — even if the KB result is otherwise relevant.\n\n"
+        "  Constraint map — when the user says → you MUST / MUST NOT:\n\n"
+        "  | User says | MUST use | MUST NOT use |\n"
+        "  |---|---|---|\n"
+        "  | batch, scheduled, weekly, daily | Databricks Jobs, spark.read, COPY INTO, scheduled SQL | Autoloader, Structured Streaming, Kafka, real-time, streaming triggers |\n"
+        "  | real-time, streaming, low latency | Structured Streaming, Autoloader, Delta Live Tables, Kafka | Scheduled Jobs-only batch, COPY INTO for real-time |\n"
+        "  | simplicity, small team | SQL Warehouse, Databricks SQL, Jobs UI, single notebooks | Multi-service streaming, Kafka, complex orchestration, microservices |\n"
+        "  | budget, cost, cheap | Serverless SQL, spot/photon, auto-terminate, Jobs (no always-on) | Provisioned throughput, always-on endpoints, premium tiers |\n"
+        "  | compliance, governance, audit | Unity Catalog, row/column security, audit logs, lineage | Open-access patterns without governance |\n"
+        "  | scale, high volume, millions | Auto-scaling clusters, Photon, Z-order, liquid clustering | Single-node, pandas-only approaches |\n\n"
+        "  If multiple constraints are present, apply ALL of them (intersection).\n"
+        "  Example: 'batch + simplicity + budget' → use scheduled Databricks Jobs +\n"
+        "  SQL Warehouse + spark.read; NEVER mention Autoloader, streaming, Kafka,\n"
+        "  or always-on endpoints.\n\n"
         "  PART 1 — ## Architecture\n"
-        "  Write the complete architecture as if the workspace is completely empty. "
+        "  Write the architecture respecting ALL user constraints from the table above. "
         "DO NOT mention any existing table, pipeline, or model names anywhere in Part 1. "
-        "Every claim must cite a KB url. Every component must reference a Databricks service.\n\n"
+        "Every claim must cite a KB url. Every component must reference a Databricks service. "
+        "If a KB result mentions a technology that conflicts with user constraints, "
+        "ignore it — do NOT include conflicting recommendations.\n\n"
         "  PART 2 — ## Existing Resources in Your Workspace\n"
-        "  Include ONLY if has_relevant_resources=true from check_workspace_state.\n"
-        "  For each profiled table, include a data-informed summary:\n"
-        "  - **<name>** (<row_count> rows, last modified <date>): can be utilized as [role].\n"
-        "  - Key columns: list the columns most relevant to the use case from profile_table.\n"
-        "  - Data quality: note any columns with null rates >10%% from null_rates_pct.\n"
-        "  - Insight: one sentence connecting a profile_table finding to an architecture decision\n"
-        "    (e.g. 'row_count of 10M+ supports the streaming ingestion recommendation above').\n"
-        "  For resources that were NOT profiled (endpoints, pipelines, models, jobs), list as:\n"
-        "  - **<name>**: already exists — can be leveraged as [role].\n"
-        "  If has_relevant_resources=false → omit this section entirely. "
-        "Do NOT write 'no existing resources were found' or anything similar.\n\n"
+        "  Read the resource_summary field from check_workspace_state output and follow "
+        "its directive exactly.\n"
+        "  If resource_summary says resources were FOUND:\n"
+        "  - Include this section with a data-informed summary for each resource.\n"
+        "  - For each profiled table:\n"
+        "    - **<name>** (<row_count> rows, last modified <date>): can be utilized as [role].\n"
+        "    - Key columns: list the columns most relevant to the use case from profile_table.\n"
+        "    - Data quality: note any columns with null rates >10% from null_rates_pct.\n"
+        "    - Insight: one sentence connecting a profile_table finding to an architecture decision\n"
+        "      (e.g. 'row_count of 10M+ supports the streaming ingestion recommendation above').\n"
+        "  - For resources that were NOT profiled (endpoints, pipelines, models, jobs), list as:\n"
+        "    - **<name>**: already exists — can be leveraged as [role].\n\n"
+        "  If resource_summary says NO resources matched:\n"
+        "  - DO NOT include this section at all — no heading, no sentence, no mention.\n"
+        "  - DO NOT write about the absence of resources (e.g. never say 'no existing "
+        "resources were found', 'since no resources matched', etc.).\n"
+        "  - NEVER reference internal JSON field names like 'has_relevant_resources' in your answer.\n"
+        "  - Simply skip from ## Architecture directly to ## References.\n\n"
         "  ## References\n"
         "  List every URL cited above. This section is REQUIRED in every answer."
     )
@@ -230,6 +258,53 @@ class DatabricksExpertAgent(ResponsesAgent):
         """Save new messages to Lakebase for a session."""
         if self._memory:
             self._memory.save_messages(conversation_id, messages)
+
+    # Regex patterns for inline sentences about absence of resources.
+    # These catch cases where the LLM ignores the system prompt and writes
+    # about missing resources outside of the ## Existing Resources heading.
+    _NO_RESOURCES_PATTERNS = [
+        re.compile(r"(?i)since\s+has_relevant_resources\s+is\s+false[^.]*\.\s*"),
+        re.compile(r"(?i)since\s+no\s+(existing\s+)?resources?\s+(were|was|is|are)\s+[^.]*\.\s*"),
+        re.compile(r"(?i)there\s+are\s+no\s+existing\s+resources[^.]*\.\s*"),
+        re.compile(r"(?i)no\s+existing\s+resources\s+(were|was)\s+(found|detected|identified|discovered)[^.]*\.\s*"),
+        re.compile(r"(?i)has_relevant_resources[^.]*\.\s*"),
+    ]
+
+    @staticmethod
+    def _strip_empty_resources_section(answer: str) -> str:
+        """Remove Existing Resources section when it has no real content.
+
+        Also strips inline sentences about absence of resources that the LLM
+        may write despite being told not to (e.g. "Since has_relevant_resources
+        is false..." or "No existing resources were found...").
+        """
+        # --- Pass 1: strip the ## Existing Resources heading + empty body ---
+        lines = answer.split('\n')
+        start = None
+        end = None
+        for i, line in enumerate(lines):
+            if line.strip().startswith('## Existing Resources'):
+                start = i
+            elif start is not None and line.strip().startswith('## '):
+                end = i
+                break
+        if start is not None:
+            if end is None:
+                end = len(lines)
+            section = '\n'.join(lines[start:end]).lower()
+            has_real_data = any(kw in section for kw in [
+                "rows,", "key columns", "null rate", "can be utilized as"
+            ])
+            if not has_real_data:
+                answer = '\n'.join(lines[:start] + lines[end:])
+
+        # --- Pass 2: strip inline "no resources" sentences ---
+        for pattern in DatabricksExpertAgent._NO_RESOURCES_PATTERNS:
+            answer = pattern.sub("", answer)
+
+        # Clean up any leftover double blank lines from removals
+        answer = re.sub(r"\n{3,}", "\n\n", answer)
+        return answer.strip()
 
     @mlflow.trace(span_type=SpanType.TOOL)
     def _execute_tool(self, tool_name: str, tool_args: dict[str, Any]) -> object:
@@ -395,6 +470,7 @@ class DatabricksExpertAgent(ResponsesAgent):
                     continue
 
                 # LLM is done — return the final answer.
+                final_answer = self._strip_empty_resources_section(final_answer)
                 messages.append({"role": "assistant", "content": final_answer})
                 if conversation_id and self._memory:
                     self._save_memory(conversation_id, messages[save_from_index:])
