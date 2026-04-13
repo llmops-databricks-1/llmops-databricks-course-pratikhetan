@@ -158,11 +158,38 @@ class DatabricksExpertAgent(ResponsesAgent):
 
     def __init__(
         self,
-        spark: SparkSession,
-        config: ProjectConfig,
+        spark: SparkSession | None = None,
+        config: ProjectConfig | None = None,
         workspace_client: WorkspaceClient | None = None,
         system_prompt: str | None = None,
     ) -> None:
+        """Initialize the agent.
+
+        Args:
+            spark: SparkSession instance (optional, auto-created if not provided).
+            config: ProjectConfig instance (optional, bootstrapped from ModelConfig).
+            workspace_client: WorkspaceClient instance (optional, auto-created).
+            system_prompt: Override for the default system prompt (optional).
+        """
+        # --- ModelConfig bootstrap (serving-time: no args passed) ---
+        if spark is None or config is None:
+            logger.info("No args passed — bootstrapping from MLflow ModelConfig (serving mode)")
+            from pyspark.sql import SparkSession as _Spark
+
+            spark = spark or _Spark.builder.getOrCreate()
+            mc = mlflow.models.ModelConfig()
+            config = ProjectConfig(
+                catalog=mc.get("catalog"),
+                schema=mc.get("schema"),
+                llm_endpoint=mc.get("llm_endpoint"),
+                experiment_name="",          # not needed at serving time
+            )
+            # Overlay optional runtime fields
+            for attr in ("system_prompt", "lakebase_instance", "genie_space_id"):
+                val = mc.get(attr) if mc.get(attr) else None
+                if val:
+                    setattr(config, attr, val)
+
         self.spark = spark
         self.cfg = config
         self.w = workspace_client or WorkspaceClient()
@@ -174,15 +201,18 @@ class DatabricksExpertAgent(ResponsesAgent):
         # Token refresh is managed internally by the SDK; safe to reuse across calls.
         self._llm_client = self.w.serving_endpoints.get_open_ai_client()
 
-        # Lakebase memory (optional — only if lakebase_instance is configured)
+        # Lakebase memory (optional — degrades gracefully if credentials fail)
         self._memory: LakebaseMemory | None = None
         if getattr(self.cfg, "lakebase_instance", None):
-            lakebase_host = self._get_or_start_lakebase(self.cfg.lakebase_instance)
-            self._memory = LakebaseMemory(
-                host=lakebase_host,
-                instance_name=self.cfg.lakebase_instance,
-            )
-            logger.info(f"  Lakebase memory enabled (instance={self.cfg.lakebase_instance})")
+            try:
+                lakebase_host = self._get_or_start_lakebase(self.cfg.lakebase_instance)
+                self._memory = LakebaseMemory(
+                    host=lakebase_host,
+                    instance_name=self.cfg.lakebase_instance,
+                )
+                logger.info(f"  Lakebase memory enabled (instance={self.cfg.lakebase_instance})")
+            except Exception as exc:
+                logger.warning(f"  Lakebase init failed ({exc}) — running stateless")
         else:
             logger.info("  Lakebase not configured — running stateless (single-turn)")
 
@@ -654,22 +684,24 @@ def log_register_agent(
     Returns:
         RegisteredModel from Unity Catalog.
     """
+    # Build resources list — only include optional endpoints if configured
     resources = [
         DatabricksServingEndpoint(endpoint_name=cfg.llm_endpoint),
-        DatabricksServingEndpoint(endpoint_name=cfg.embedding_endpoint),
         DatabricksVectorSearchIndex(index_name=f"{cfg.catalog}.{cfg.schema}.kb_chunks_index"),
         DatabricksTable(table_name=f"{cfg.catalog}.{cfg.schema}.kb_chunks"),
         DatabricksTable(table_name=f"{cfg.catalog}.{cfg.schema}.databricks_knowledge_base"),
     ]
+    if cfg.embedding_endpoint:
+        resources.append(DatabricksServingEndpoint(endpoint_name=cfg.embedding_endpoint))
 
+    # Only include fields the agent actually needs at serving time.
     model_config = {
         "catalog": cfg.catalog,
         "schema": cfg.schema,
         "llm_endpoint": cfg.llm_endpoint,
-        "embedding_endpoint": cfg.embedding_endpoint,
-        "vector_search_endpoint": cfg.vector_search_endpoint,
         "system_prompt": cfg.system_prompt,
         "lakebase_instance": cfg.lakebase_instance,
+        "genie_space_id": getattr(cfg, "genie_space_id", None),
     }
 
     test_request = {"input": [{"role": "user", "content": "What is Delta Live Tables and when should I use it?"}]}
@@ -707,9 +739,3 @@ def log_register_agent(
         version=registered_model.version,
     )
     return registered_model
-
-
-# Required by MLflow when this file is used as a pyfunc code model
-# (mlflow.pyfunc.log_model(python_model="agent.py")).
-# MLflow needs to know which class to instantiate at serving time.
-mlflow.models.set_model(DatabricksExpertAgent)

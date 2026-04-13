@@ -92,7 +92,7 @@ except Exception:
 
 run_id = os.getenv("DATABRICKS_RUN_ID", "local")
 model_name = f"{cfg.catalog}.{cfg.schema}.arch_agent"
-agent_code_path = "../src/arch_designer_agent/agent.py"
+agent_code_path = "../src/arch_designer_agent/agent_model.py"
 
 logger.info(f"git_sha    : {git_sha}")
 logger.info(f"run_id     : {run_id}")

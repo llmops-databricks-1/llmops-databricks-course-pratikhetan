@@ -13,11 +13,11 @@ class ProjectConfig(BaseModel):
 
     catalog: str = Field(..., description="Unity Catalog name")
     db_schema: str = Field(..., description="Schema name", alias="schema")
-    volume: str = Field(..., description="Volume name")
+    volume: str = Field(default="", description="Volume name")
     llm_endpoint: str = Field(..., description="LLM endpoint name")
-    embedding_endpoint: str = Field(..., description="Embedding endpoint name")
-    warehouse_id: str = Field(..., description="Warehouse ID")
-    vector_search_endpoint: str = Field(..., description="Vector search endpoint name")
+    embedding_endpoint: str = Field(default="", description="Embedding endpoint name")
+    warehouse_id: str = Field(default="", description="Warehouse ID")
+    vector_search_endpoint: str = Field(default="", description="Vector search endpoint name")
     genie_space_id: str | None = Field(None, description="Genie space ID for MCP integration")
     lakebase_instance: str | None = Field(
         None, description="Lakebase (PostgreSQL) instance name for conversation memory"
