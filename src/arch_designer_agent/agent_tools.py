@@ -202,7 +202,7 @@ class DatabricksExpertTools:
                 cols = [c.name for c in (resp.manifest.schema.columns or [])]
                 rows = []
                 for chunk in (resp.result.data_array or []):
-                    rows.append(dict(zip(cols, chunk)))
+                    rows.append(dict(zip(cols, chunk, strict=False)))
                 return rows
             logger.warning(f"SQL statement failed: {resp.status}")
             return []

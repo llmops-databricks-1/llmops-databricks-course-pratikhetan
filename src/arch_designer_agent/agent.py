@@ -363,7 +363,7 @@ class DatabricksExpertAgent(ResponsesAgent):
             # Format results as list of dicts (same structure MCP returns)
             rows = results.get("result", {}).get("data_array", [])
             cols = [c["name"] for c in results.get("manifest", {}).get("columns", [])]
-            formatted = [dict(zip(cols, row)) for row in rows]
+            formatted = [dict(zip(cols, row, strict=False)) for row in rows]
             return json.dumps(formatted, default=str)
 
         fallback_tool = ToolInfo(
