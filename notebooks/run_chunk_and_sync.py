@@ -41,3 +41,23 @@ logger.info(f"Chunking complete: {new_chunks:,} new chunks written")
 vs_manager = VectorSearchManager(config=cfg)
 vs_manager.sync_index()
 logger.info("✓ Vector Search index sync triggered successfully")
+
+# COMMAND ----------
+# -- Step 3 (optional): Agent orchestration demo ---------------------------
+# Keep disabled for job runs. Enable only for interactive notebook testing.
+
+RUN_AGENT_DEMO = False
+
+if RUN_AGENT_DEMO:
+    from arch_designer_agent.agent import DatabricksExpertAgent
+
+    demo_query = (
+        "Design a low-latency Databricks architecture for near real-time fraud "
+        "detection with strong governance controls."
+    )
+
+    agent = DatabricksExpertAgent(spark=spark, config=cfg)
+    answer = agent.chat(demo_query)
+
+    logger.info("=== Agent Recommendation ===")
+    logger.info(answer)

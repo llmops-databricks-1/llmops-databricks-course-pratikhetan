@@ -183,10 +183,7 @@ def fixed_size_chunking(text: str, chunk_size: int = 500, overlap: int = 50) -> 
 # COMMAND ----------
 
 # Example: Apply fixed-size chunking to a sample doc from the KB
-sample_text = (
-    spark.table(KB_TABLE).select("content_text").limit(1).collect()[0]["content_text"]
-    or ""
-)
+sample_text = spark.table(KB_TABLE).select("content_text").limit(1).collect()[0]["content_text"] or ""
 fixed_chunks = fixed_size_chunking(sample_text, chunk_size=500, overlap=50)
 
 logger.info(f"Original text length: {len(sample_text)} characters")
@@ -252,9 +249,7 @@ logger.info(sentence_chunks[0][:200] + "...")
 # COMMAND ----------
 
 _MD_HEADERS = [("#", "h1"), ("##", "h2"), ("###", "h3"), ("####", "h4")]
-md_splitter = MarkdownHeaderTextSplitter(
-    headers_to_split_on=_MD_HEADERS, strip_headers=False
-)
+md_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=_MD_HEADERS, strip_headers=False)
 char_splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " ", ""],
     chunk_size=1500,
@@ -280,10 +275,7 @@ logger.info(f"Markdown sections after Stage 1: {len(md_sections)}")
 logger.info(f"Final chunks after Stage 2: {len(md_chunks)}")
 for i, c in enumerate(md_chunks[:3], 1):
     header = " > ".join(v for k in ("h1", "h2", "h3") if (v := c.metadata.get(k)))
-    logger.info(
-        f"  Chunk {i} | header='{header}' | "
-        f"{len(c.page_content)} chars | preview: {c.page_content[:80]}..."
-    )
+    logger.info(f"  Chunk {i} | header='{header}' | {len(c.page_content)} chars | preview: {c.page_content[:80]}...")
 
 # COMMAND ----------
 # MAGIC %md
