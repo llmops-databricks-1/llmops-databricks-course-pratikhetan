@@ -10,8 +10,8 @@ from typing import Any
 from uuid import uuid4
 
 import backoff
-import nest_asyncio
 import mlflow
+import nest_asyncio
 import openai
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
@@ -206,7 +206,7 @@ class DatabricksExpertAgent(ResponsesAgent):
                 catalog=mc.get("catalog"),
                 schema=mc.get("schema"),
                 llm_endpoint=mc.get("llm_endpoint"),
-                experiment_name="",          # not needed at serving time
+                experiment_name="",  # not needed at serving time
             )
             # Overlay optional runtime fields
             for attr in ("system_prompt", "lakebase_instance", "genie_space_id"):
@@ -329,7 +329,9 @@ class DatabricksExpertAgent(ResponsesAgent):
         ws_snapshot = getattr(self.cfg, "_workspace_snapshot", None)
         warehouse_id = getattr(self.cfg, "_warehouse_id", None) or getattr(self.cfg, "warehouse_id", None)
         custom_tools = DatabricksExpertTools(
-            spark=self.spark, config=self.cfg, workspace_client=self.w,
+            spark=self.spark,
+            config=self.cfg,
+            workspace_client=self.w,
             workspace_snapshot=ws_snapshot,
             warehouse_id=warehouse_id,
         ).build_tool_infos()
@@ -351,12 +353,12 @@ class DatabricksExpertAgent(ResponsesAgent):
 
         def _kb_search(query: str) -> str:
             from databricks.vector_search.client import VectorSearchClient
+
             vs_client = VectorSearchClient()
             index = vs_client.get_index(index_name=index_name)
             results = index.similarity_search(
                 query_text=query,
-                columns=["chunk_id", "text", "title", "source_type",
-                         "source_repo", "section_header", "url"],
+                columns=["chunk_id", "text", "title", "source_type", "source_repo", "section_header", "url"],
                 num_results=5,
                 query_type="hybrid",
             )
@@ -764,12 +766,17 @@ class DatabricksExpertAgent(ResponsesAgent):
         )
 
 
-
 # Internal tables that are agent infrastructure — excluded from workspace snapshots.
 _SNAPSHOT_INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
 _SNAPSHOT_INTERNAL_SUBSTRINGS = {
-    "kb-pipeline", "kb_pipeline", "kb_chunks", "knowledge_base",
-    "knowledge-base", "llmops_course", "online_index_view", "event_log_",
+    "kb-pipeline",
+    "kb_pipeline",
+    "kb_chunks",
+    "knowledge_base",
+    "knowledge-base",
+    "llmops_course",
+    "online_index_view",
+    "event_log_",
 }
 
 
@@ -828,9 +835,7 @@ def _prescan_workspace_state(w: WorkspaceClient, cfg: ProjectConfig) -> dict[str
     # Registered models
     try:
         all_models = list(w.registered_models.list(catalog_name=cfg.catalog, schema_name=cfg.schema))
-        snapshot["models"] = [
-            {"name": m.name} for m in all_models if not _is_snapshot_internal(m.name)
-        ]
+        snapshot["models"] = [{"name": m.name} for m in all_models if not _is_snapshot_internal(m.name)]
     except Exception as exc:
         logger.warning(f"Pre-scan models failed: {exc}")
         snapshot["models"] = []

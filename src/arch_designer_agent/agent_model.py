@@ -1,5 +1,4 @@
-"""MLflow code-model entry point.
-"""
+"""MLflow code-model entry point."""
 
 import mlflow
 

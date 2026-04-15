@@ -16,7 +16,6 @@
 # COMMAND ----------
 
 # DBTITLE 1,Setup and configuration
-import os
 import mlflow
 from databricks import agents
 from databricks.sdk import WorkspaceClient
@@ -35,9 +34,7 @@ mlflow.set_experiment(cfg.experiment_name)
 model_name = f"{cfg.catalog}.{cfg.schema}.arch_agent"
 endpoint_name = "arch-agent-endpoint-dev"
 
-model_version = MlflowClient().get_model_version_by_alias(
-    model_name, "champion"
-).version
+model_version = MlflowClient().get_model_version_by_alias(model_name, "champion").version
 
 workspace = WorkspaceClient()
 experiment = MlflowClient().get_experiment_by_name(cfg.experiment_name)
@@ -102,6 +99,7 @@ agents.deploy(
 # DBTITLE 1,Test deployed endpoint
 import random
 from datetime import datetime
+
 from openai import OpenAI
 
 host = workspace.config.host
@@ -119,12 +117,17 @@ request_id = f"req-{timestamp}-{random.randint(100000, 999999)}"
 response = client.responses.create(
     model=endpoint_name,
     input=[
-        {"role": "user", "content": "Design a real-time fraud detection pipeline on Databricks for streaming transaction data"}
+        {
+            "role": "user",
+            "content": "Design a real-time fraud detection pipeline on Databricks for streaming transaction data",
+        }
     ],
-    extra_body={"custom_inputs": {
-        "session_id": session_id,
-        "request_id": request_id,
-    }}
+    extra_body={
+        "custom_inputs": {
+            "session_id": session_id,
+            "request_id": request_id,
+        }
+    },
 )
 
 logger.info(f"Response ID : {response.id}")

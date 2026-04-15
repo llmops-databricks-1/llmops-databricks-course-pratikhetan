@@ -170,10 +170,12 @@ class DatabricksExpertTools:
         if self._spark is None:
             try:
                 from databricks.connect import DatabricksSession
+
                 self._spark = DatabricksSession.builder.serverless().getOrCreate()
                 logger.info("Lazy Spark init: DatabricksSession (serverless)")
             except Exception:
                 from pyspark.sql import SparkSession as _Spark
+
                 self._spark = _Spark.builder.getOrCreate()
                 logger.info("Lazy Spark init: SparkSession (local)")
         return self._spark
@@ -193,6 +195,7 @@ class DatabricksExpertTools:
             return []
         try:
             from databricks.sdk.service.sql import StatementState
+
             resp = self.w.statement_execution.execute_statement(
                 warehouse_id=self._warehouse_id,
                 statement=sql,
@@ -201,7 +204,7 @@ class DatabricksExpertTools:
             if resp.status and resp.status.state == StatementState.SUCCEEDED:
                 cols = [c.name for c in (resp.manifest.schema.columns or [])]
                 rows = []
-                for chunk in (resp.result.data_array or []):
+                for chunk in resp.result.data_array or []:
                     rows.append(dict(zip(cols, chunk, strict=False)))
                 return rows
             logger.warning(f"SQL statement failed: {resp.status}")
@@ -496,10 +499,7 @@ class DatabricksExpertTools:
 
         return state
 
-
-    def _check_workspace_hybrid(
-        self, state: dict[str, Any], matches: object
-    ) -> dict[str, Any]:
+    def _check_workspace_hybrid(self, state: dict[str, Any], matches: object) -> dict[str, Any]:
         """Hybrid workspace state: live SQL for UC resources, snapshot for workspace resources.
 
         In serving mode with a SQL warehouse declared, tables and models are
@@ -522,8 +522,7 @@ class DatabricksExpertTools:
                 user_tables = [
                     {"name": r["table_name"], "comment": r.get("comment") or ""}
                     for r in rows
-                    if r["table_name"] not in _INTERNAL_TABLES
-                    and not _is_internal_resource(r["table_name"])
+                    if r["table_name"] not in _INTERNAL_TABLES and not _is_internal_resource(r["table_name"])
                 ]
                 state["tables"] = {
                     "existing_relevant": [
@@ -640,11 +639,14 @@ class DatabricksExpertTools:
                     {
                         "name": j.settings.name,
                         "schedule": str(j.settings.schedule.quartz_cron_expression)
-                        if j.settings and j.settings.schedule else "manual",
+                        if j.settings and j.settings.schedule
+                        else "manual",
                     }
                     for j in all_jobs
-                    if j.settings and j.settings.name
-                    and matches(j.settings.name) and not _is_internal_resource(j.settings.name)
+                    if j.settings
+                    and j.settings.name
+                    and matches(j.settings.name)
+                    and not _is_internal_resource(j.settings.name)
                 ],
                 "total_scanned": len(all_jobs),
                 "source": "live SDK",
@@ -678,9 +680,7 @@ class DatabricksExpertTools:
         return self._build_resource_summary(state)
 
     @staticmethod
-    def _tables_from_snapshot(
-        state: dict[str, Any], snap: dict[str, Any], matches: object
-    ) -> None:
+    def _tables_from_snapshot(state: dict[str, Any], snap: dict[str, Any], matches: object) -> None:
         """Populate tables in state from the pre-scanned snapshot."""
         user_tables = snap.get("tables", [])
         state["tables"] = {
@@ -696,18 +696,21 @@ class DatabricksExpertTools:
     @staticmethod
     def _build_resource_summary(state: dict[str, Any]) -> dict[str, Any]:
         """Add has_relevant_resources flag and resource_summary text to state."""
+
         def _has_items(key: str, subkey: str) -> bool:
             section = state.get(key, {})
             return bool(isinstance(section, dict) and section.get(subkey))
 
-        has_resources = any([
-            _has_items("vector_search_endpoints", "relevant"),
-            _has_items("serving_endpoints", "relevant"),
-            _has_items("dlt_pipelines", "relevant"),
-            _has_items("tables", "existing_relevant"),
-            _has_items("registered_models", "relevant"),
-            _has_items("jobs", "relevant"),
-        ])
+        has_resources = any(
+            [
+                _has_items("vector_search_endpoints", "relevant"),
+                _has_items("serving_endpoints", "relevant"),
+                _has_items("dlt_pipelines", "relevant"),
+                _has_items("tables", "existing_relevant"),
+                _has_items("registered_models", "relevant"),
+                _has_items("jobs", "relevant"),
+            ]
+        )
         state["has_relevant_resources"] = has_resources
 
         if has_resources:
@@ -821,15 +824,11 @@ class DatabricksExpertTools:
             cols = [c["name"] for c in result.get("columns", []) if c["name"]]
             if isinstance(total, int) and total > 0 and len(cols) <= 30:
                 null_exprs = ", ".join(
-                    f"ROUND(SUM(CASE WHEN `{c}` IS NULL THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS `{c}`"
-                    for c in cols
+                    f"ROUND(SUM(CASE WHEN `{c}` IS NULL THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS `{c}`" for c in cols
                 )
                 rows = self._run_sql(f"SELECT {null_exprs} FROM {table_name}")
                 if rows:
-                    result["null_rates_pct"] = {
-                        k: float(v) if v is not None else 0.0
-                        for k, v in rows[0].items()
-                    }
+                    result["null_rates_pct"] = {k: float(v) if v is not None else 0.0 for k, v in rows[0].items()}
         except Exception as exc:
             result["null_rates_pct"] = {"error": str(exc)}
 
