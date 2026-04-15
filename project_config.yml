@@ -7,7 +7,7 @@ dev:
   volume: llmops_files
   llm_endpoint: databricks-llama-4-maverick
   embedding_endpoint: databricks-gte-large-en
-  warehouse_id: 7077f4cb0e616c62
+  warehouse_id: 96e26e80fcd91931
   vector_search_endpoint: llmops_course_vs_endpoint
   genie_space_id: null
   lakebase_instance: arch-agent-memory
@@ -20,9 +20,9 @@ acc:
   volume: llmops_files
   llm_endpoint: databricks-meta-llama-3-1-70b-instruct
   embedding_endpoint: databricks-gte-large-en
-  warehouse_id: 7077f4cb0e616c62
+  warehouse_id: 96e26e80fcd91931
   vector_search_endpoint: llmops_course_vs_endpoint
-  genie_space_id: 01f113061bf41578baff744a41bd9ab0
+  genie_space_id: null
   knowledge_base_table: databricks_knowledge_base
 
 # Production environment
@@ -32,7 +32,7 @@ prd:
   volume: llmops_files
   llm_endpoint: databricks-meta-llama-3-1-70b-instruct
   embedding_endpoint: databricks-gte-large-en
-  warehouse_id: 7077f4cb0e616c62
+  warehouse_id: 96e26e80fcd91931
   vector_search_endpoint: llmops_course_vs_endpoint
   genie_space_id: 01f113061bf41578baff744a41bd9ab0
   knowledge_base_table: databricks_knowledge_base

@@ -58,6 +58,12 @@ _INTERNAL_RESOURCE_SUBSTRINGS = {
     "llmops_course",
     "online_index_view",
     "event_log_",
+    # agents.deploy() auto-created inference & monitoring tables
+    "_payload",
+    "trace_logs",
+    "_feedback",
+    "_assessment",
+    "request_response",
 }
 
 # Keywords that are too generic for substring matching and cause false
@@ -142,15 +148,67 @@ class DatabricksExpertTools:
 
     def __init__(
         self,
-        spark: SparkSession,
+        spark: SparkSession | None,
         config: ProjectConfig,
         workspace_client: WorkspaceClient | None = None,
+        workspace_snapshot: dict[str, Any] | None = None,
+        warehouse_id: str | None = None,
     ) -> None:
-        self.spark = spark
+        self._spark = spark  # May be None in serving mode — created lazily
         self.cfg = config
         self.w = workspace_client or WorkspaceClient()
         self.kb_table = f"{config.catalog}.{config.schema}.databricks_knowledge_base"
         self.chunks_table = f"{config.catalog}.{config.schema}.kb_chunks"
+        # Pre-scanned snapshot from registration time (jobs, pipelines, endpoints)
+        self._workspace_snapshot = workspace_snapshot
+        # SQL warehouse for live UC queries in serving mode
+        self._warehouse_id = warehouse_id
+
+    @property
+    def spark(self) -> SparkSession:
+        """Lazy Spark initialization — creates session on first access."""
+        if self._spark is None:
+            try:
+                from databricks.connect import DatabricksSession
+                self._spark = DatabricksSession.builder.serverless().getOrCreate()
+                logger.info("Lazy Spark init: DatabricksSession (serverless)")
+            except Exception:
+                from pyspark.sql import SparkSession as _Spark
+                self._spark = _Spark.builder.getOrCreate()
+                logger.info("Lazy Spark init: SparkSession (local)")
+        return self._spark
+
+    # ------------------------------------------------------------------
+    # SQL via Statement Execution API (serving mode)
+    # ------------------------------------------------------------------
+
+    def _run_sql(self, sql: str) -> list[dict[str, Any]]:
+        """Execute SQL via Statement Execution API using the declared warehouse.
+
+        Returns list of dicts (one per row). Falls back to empty list on error.
+        Used in serving mode where Spark is unavailable but a SQL warehouse
+        is declared as a DatabricksSQLWarehouse resource.
+        """
+        if not self._warehouse_id:
+            return []
+        try:
+            from databricks.sdk.service.sql import StatementState
+            resp = self.w.statement_execution.execute_statement(
+                warehouse_id=self._warehouse_id,
+                statement=sql,
+                wait_timeout="30s",
+            )
+            if resp.status and resp.status.state == StatementState.SUCCEEDED:
+                cols = [c.name for c in (resp.manifest.schema.columns or [])]
+                rows = []
+                for chunk in (resp.result.data_array or []):
+                    rows.append(dict(zip(cols, chunk)))
+                return rows
+            logger.warning(f"SQL statement failed: {resp.status}")
+            return []
+        except Exception as exc:
+            logger.warning(f"_run_sql error: {exc}")
+            return []
 
     # ------------------------------------------------------------------
     # Keyword expansion — LLM-powered with static fallback
@@ -273,6 +331,13 @@ class DatabricksExpertTools:
             "catalog": self.cfg.catalog,
             "schema": self.cfg.schema,
         }
+
+        # Hybrid serving-mode strategy:
+        # 1. SQL warehouse (if available) → live UC resource discovery (tables, models)
+        # 2. Pre-scanned snapshot → workspace-level resources (jobs, pipelines, endpoints)
+        # 3. Fall through to live SDK calls only in notebook mode (full permissions)
+        if self._warehouse_id or self._workspace_snapshot:
+            return self._check_workspace_hybrid(state, matches)
 
         try:
             all_vs = list(self.w.vector_search_endpoints.list())
@@ -431,8 +496,263 @@ class DatabricksExpertTools:
 
         return state
 
+
+    def _check_workspace_hybrid(
+        self, state: dict[str, Any], matches: object
+    ) -> dict[str, Any]:
+        """Hybrid workspace state: live SQL for UC resources, snapshot for workspace resources.
+
+        In serving mode with a SQL warehouse declared, tables and models are
+        discovered LIVE via SQL (SHOW TABLES, information_schema).  Jobs, pipelines,
+        and endpoints come from the pre-scanned snapshot since they aren't queryable
+        via SQL.  This gives current UC data while avoiding the scoped-token
+        limitations of the workspace SDK APIs.
+        """
+        snap = self._workspace_snapshot or {}
+
+        # --- LIVE: Tables via SQL warehouse (if available) ---
+        if self._warehouse_id:
+            try:
+                sql = (
+                    f"SELECT table_name, comment FROM system.information_schema.tables "
+                    f"WHERE table_catalog = '{self.cfg.catalog}' "
+                    f"AND table_schema = '{self.cfg.schema}'"
+                )
+                rows = self._run_sql(sql)
+                user_tables = [
+                    {"name": r["table_name"], "comment": r.get("comment") or ""}
+                    for r in rows
+                    if r["table_name"] not in _INTERNAL_TABLES
+                    and not _is_internal_resource(r["table_name"])
+                ]
+                state["tables"] = {
+                    "existing_relevant": [
+                        {"name": t["name"], "comment": t["comment"]}
+                        for t in user_tables
+                        if matches(t["name"]) or matches(t["comment"])
+                    ],
+                    "total_scanned": len(user_tables),
+                    "source": "live SQL",
+                }
+                # Fall back to snapshot if live SQL returned empty but snapshot has data
+                if not user_tables and snap.get("tables"):
+                    logger.info("Live SQL returned 0 tables; falling back to snapshot")
+                    self._tables_from_snapshot(state, snap, matches)
+            except Exception as exc:
+                logger.warning(f"Live SQL tables failed: {exc}; falling back to snapshot")
+                self._tables_from_snapshot(state, snap, matches)
+        else:
+            self._tables_from_snapshot(state, snap, matches)
+
+        # --- LIVE: Registered models via SQL warehouse ---
+        if self._warehouse_id:
+            try:
+                sql = (
+                    f"SELECT model_name FROM system.information_schema.model_versions "
+                    f"WHERE catalog_name = '{self.cfg.catalog}' "
+                    f"AND schema_name = '{self.cfg.schema}' "
+                    f"GROUP BY model_name"
+                )
+                rows = self._run_sql(sql)
+                all_models = [{"name": r["model_name"]} for r in rows if not _is_internal_resource(r["model_name"])]
+                state["registered_models"] = {
+                    "relevant": [m for m in all_models if matches(m["name"])],
+                    "total_scanned": len(all_models),
+                    "source": "live SQL",
+                }
+                # Fall back to snapshot if live SQL returned empty but snapshot has data
+                if not all_models and snap.get("models"):
+                    logger.info("Live SQL returned 0 models; falling back to snapshot")
+                    md_list = snap.get("models", [])
+                    state["registered_models"] = {
+                        "relevant": [m for m in md_list if matches(m["name"])],
+                        "total_scanned": len(md_list),
+                        "source": "snapshot (live SQL empty)",
+                    }
+            except Exception:
+                md_list = snap.get("models", [])
+                state["registered_models"] = {
+                    "relevant": [m for m in md_list if matches(m["name"])],
+                    "total_scanned": len(md_list),
+                    "source": "snapshot",
+                }
+        else:
+            md_list = snap.get("models", [])
+            state["registered_models"] = {
+                "relevant": [m for m in md_list if matches(m["name"])],
+                "total_scanned": len(md_list),
+            }
+
+        # --- LIVE SDK: Serving endpoints (works with scoped token) ---
+        try:
+            all_se = list(self.w.serving_endpoints.list())
+            state["serving_endpoints"] = {
+                "relevant": [
+                    {"name": e.name, "state": str(e.state.config_update) if e.state else "unknown"}
+                    for e in all_se
+                    if matches(e.name) and not _is_internal_resource(e.name)
+                ],
+                "total_scanned": len(all_se),
+                "source": "live SDK",
+            }
+        except Exception:
+            se_list = snap.get("serving_endpoints", [])
+            state["serving_endpoints"] = {
+                "relevant": [e for e in se_list if matches(e["name"])],
+                "total_scanned": len(se_list),
+                "source": "snapshot (SDK fallback)",
+            }
+
+        # --- LIVE SDK → SNAPSHOT fallback: Pipelines ---
+        try:
+            all_dlt = list(self.w.pipelines.list_pipelines())
+            state["dlt_pipelines"] = {
+                "relevant": [
+                    {"name": p.name, "state": str(p.latest_updates[0].state) if p.latest_updates else "no_runs"}
+                    for p in all_dlt
+                    if p.name and matches(p.name) and not _is_internal_resource(p.name)
+                ],
+                "total_scanned": len(all_dlt),
+                "source": "live SDK",
+            }
+            # Fall back to snapshot if SDK returned empty but snapshot has data
+            if not all_dlt and snap.get("pipelines"):
+                logger.info("Live SDK returned 0 pipelines; falling back to snapshot")
+                pl_list = snap.get("pipelines", [])
+                state["dlt_pipelines"] = {
+                    "relevant": [p for p in pl_list if matches(p["name"])],
+                    "total_scanned": len(pl_list),
+                    "source": "snapshot (SDK empty)",
+                }
+        except Exception:
+            pl_list = snap.get("pipelines", [])
+            state["dlt_pipelines"] = {
+                "relevant": [p for p in pl_list if matches(p["name"])],
+                "total_scanned": len(pl_list),
+                "source": "snapshot (SDK fallback)",
+            }
+
+        # --- LIVE SDK → SNAPSHOT fallback: Jobs ---
+        try:
+            all_jobs = list(self.w.jobs.list())
+            state["jobs"] = {
+                "relevant": [
+                    {
+                        "name": j.settings.name,
+                        "schedule": str(j.settings.schedule.quartz_cron_expression)
+                        if j.settings and j.settings.schedule else "manual",
+                    }
+                    for j in all_jobs
+                    if j.settings and j.settings.name
+                    and matches(j.settings.name) and not _is_internal_resource(j.settings.name)
+                ],
+                "total_scanned": len(all_jobs),
+                "source": "live SDK",
+            }
+            # Fall back to snapshot if SDK returned empty but snapshot has data
+            if not all_jobs and snap.get("jobs"):
+                logger.info("Live SDK returned 0 jobs; falling back to snapshot")
+                jb_list = snap.get("jobs", [])
+                state["jobs"] = {
+                    "relevant": [j for j in jb_list if matches(j["name"])],
+                    "total_scanned": len(jb_list),
+                    "source": "snapshot (SDK empty)",
+                }
+        except Exception:
+            jb_list = snap.get("jobs", [])
+            state["jobs"] = {
+                "relevant": [j for j in jb_list if matches(j["name"])],
+                "total_scanned": len(jb_list),
+                "source": "snapshot (SDK fallback)",
+            }
+
+        # --- SNAPSHOT: Vector search endpoints (SDK .list() bug) ---
+        vs_list = snap.get("vector_search_endpoints", [])
+        state["vector_search_endpoints"] = {
+            "relevant": [v for v in vs_list if matches(v["name"])],
+            "total_scanned": len(vs_list),
+            "source": "snapshot (SDK bug workaround)",
+        }
+
+        # Build resource summary
+        return self._build_resource_summary(state)
+
+    @staticmethod
+    def _tables_from_snapshot(
+        state: dict[str, Any], snap: dict[str, Any], matches: object
+    ) -> None:
+        """Populate tables in state from the pre-scanned snapshot."""
+        user_tables = snap.get("tables", [])
+        state["tables"] = {
+            "existing_relevant": [
+                {"name": t["name"], "comment": t.get("comment", "")}
+                for t in user_tables
+                if matches(t["name"]) or matches(t.get("comment", ""))
+            ],
+            "total_scanned": len(user_tables),
+            "source": "snapshot",
+        }
+
+    @staticmethod
+    def _build_resource_summary(state: dict[str, Any]) -> dict[str, Any]:
+        """Add has_relevant_resources flag and resource_summary text to state."""
+        def _has_items(key: str, subkey: str) -> bool:
+            section = state.get(key, {})
+            return bool(isinstance(section, dict) and section.get(subkey))
+
+        has_resources = any([
+            _has_items("vector_search_endpoints", "relevant"),
+            _has_items("serving_endpoints", "relevant"),
+            _has_items("dlt_pipelines", "relevant"),
+            _has_items("tables", "existing_relevant"),
+            _has_items("registered_models", "relevant"),
+            _has_items("jobs", "relevant"),
+        ])
+        state["has_relevant_resources"] = has_resources
+
+        if has_resources:
+            found_names = []
+            for key, subkey in [
+                ("tables", "existing_relevant"),
+                ("serving_endpoints", "relevant"),
+                ("dlt_pipelines", "relevant"),
+                ("vector_search_endpoints", "relevant"),
+                ("registered_models", "relevant"),
+                ("jobs", "relevant"),
+            ]:
+                section = state.get(key, {})
+                if isinstance(section, dict):
+                    for item in section.get(subkey, []):
+                        found_names.append(item.get("name", "unknown"))
+            state["resource_summary"] = (
+                f"FOUND {len(found_names)} existing resource(s) that may be relevant: "
+                f"{', '.join(found_names)}. "
+                "Include an '## Existing Resources in Your Workspace' section in your "
+                "answer describing how these can be leveraged."
+            )
+        else:
+            state["resource_summary"] = (
+                "NO existing resources matched this use case. "
+                "Do NOT include any 'Existing Resources' section in your answer. "
+                "Do NOT mention the absence of resources — simply skip to ## References. "
+                "Write only the ## Architecture and ## References sections."
+            )
+
+        return state
+
     def health_check(self, args: dict[str, Any]) -> dict[str, Any]:
         _ = args
+        if self._warehouse_id:
+            # SQL-based health check (serving mode)
+            try:
+                for tbl in (self.kb_table, self.chunks_table):
+                    rows = self._run_sql(f"SELECT 1 FROM {tbl} LIMIT 1")
+                    if not rows:
+                        return {"kb_ready": False, "status": "degraded"}
+                return {"kb_ready": True, "status": "ok"}
+            except Exception as exc:
+                return {"kb_ready": False, "status": f"error: {exc}"}
+        # Spark-based (notebook mode)
         kb_exists = self.spark.catalog.tableExists(self.kb_table)
         chunks_exists = self.spark.catalog.tableExists(self.chunks_table)
         return {
@@ -443,12 +763,8 @@ class DatabricksExpertTools:
     def profile_table(self, args: dict[str, Any]) -> dict[str, Any]:
         """Return schema, size, freshness, null rates, and sample rows for a Delta table.
 
-        The LLM uses this to ground recommendations in actual data characteristics:
-        - column names/types  → what transformations are needed
-        - row_count           → streaming vs batch threshold
-        - last_modified       → is the pipeline healthy / data fresh
-        - null_rates          → data quality issues to address in Silver layer
-        - sample_rows         → domain understanding (currency, IDs, labels)
+        Uses SQL via Statement Execution API when a warehouse_id is available
+        (serving mode). Falls back to Spark in notebook mode.
         """
         table_name = args.get("table_name", "")
         if not table_name:
@@ -462,6 +778,72 @@ class DatabricksExpertTools:
                 "Only profile tables that were returned in check_workspace_state existing_relevant results."
             }
 
+        # SQL-based profiling (serving mode)
+        if self._warehouse_id:
+            return self._profile_table_sql(table_name)
+
+        # Spark-based profiling (notebook mode)
+        return self._profile_table_spark(table_name)
+
+    def _profile_table_sql(self, table_name: str) -> dict[str, Any]:
+        """Profile a table using SQL via Statement Execution API."""
+        result: dict[str, Any] = {"table_name": table_name}
+
+        # Schema
+        try:
+            rows = self._run_sql(f"DESCRIBE TABLE {table_name}")
+            result["columns"] = [
+                {"name": r.get("col_name", ""), "type": r.get("data_type", ""), "nullable": True}
+                for r in rows
+                if r.get("col_name") and not r["col_name"].startswith("#")
+            ]
+        except Exception as exc:
+            return {"error": f"Could not describe table '{table_name}': {exc}"}
+
+        # Row count
+        try:
+            rows = self._run_sql(f"SELECT COUNT(*) AS cnt FROM {table_name}")
+            result["row_count"] = int(rows[0]["cnt"]) if rows else 0
+        except Exception as exc:
+            result["row_count"] = {"error": str(exc)}
+
+        # Freshness
+        try:
+            rows = self._run_sql(f"DESCRIBE HISTORY {table_name} LIMIT 2")
+            result["last_modified"] = rows[0].get("timestamp", "unknown") if rows else "unknown"
+            result["recent_operations"] = [r.get("operation", "") for r in rows]
+        except Exception as exc:
+            result["last_modified"] = {"error": str(exc)}
+
+        # Null rates (only for tables with manageable column count)
+        try:
+            total = result.get("row_count", 0)
+            cols = [c["name"] for c in result.get("columns", []) if c["name"]]
+            if isinstance(total, int) and total > 0 and len(cols) <= 30:
+                null_exprs = ", ".join(
+                    f"ROUND(SUM(CASE WHEN `{c}` IS NULL THEN 1 ELSE 0 END) / COUNT(*) * 100, 1) AS `{c}`"
+                    for c in cols
+                )
+                rows = self._run_sql(f"SELECT {null_exprs} FROM {table_name}")
+                if rows:
+                    result["null_rates_pct"] = {
+                        k: float(v) if v is not None else 0.0
+                        for k, v in rows[0].items()
+                    }
+        except Exception as exc:
+            result["null_rates_pct"] = {"error": str(exc)}
+
+        # Sample rows
+        try:
+            rows = self._run_sql(f"SELECT * FROM {table_name} LIMIT 3")
+            result["sample_rows"] = rows
+        except Exception as exc:
+            result["sample_rows"] = {"error": str(exc)}
+
+        return result
+
+    def _profile_table_spark(self, table_name: str) -> dict[str, Any]:
+        """Profile a table using Spark (notebook mode)."""
         result: dict[str, Any] = {"table_name": table_name}
 
         try:

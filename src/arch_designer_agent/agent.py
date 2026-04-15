@@ -10,6 +10,7 @@ from typing import Any
 from uuid import uuid4
 
 import backoff
+import nest_asyncio
 import mlflow
 import openai
 from databricks.sdk import WorkspaceClient
@@ -20,6 +21,7 @@ from mlflow import MlflowClient
 from mlflow.entities import SpanType
 from mlflow.models.resources import (
     DatabricksServingEndpoint,
+    DatabricksSQLWarehouse,
     DatabricksTable,
     DatabricksVectorSearchIndex,
 )
@@ -87,11 +89,16 @@ class DatabricksExpertAgent(ResponsesAgent):
         "## STEP 3 — WRITE THE ANSWER\n\n"
         "**ALL answers — CITATIONS ARE MANDATORY:**\n"
         "  The KB results shown above contain a 'url' field on every entry. "
-        "You MUST cite every source you use. Write [description](url) inline in the text. "
+        "You MUST cite ONLY URLs that appear in the KB results above. "
+        "NEVER generate, guess, or hallucinate URLs — if a URL is not in the KB results, "
+        "do NOT use it. Every citation must come from the 'url' field of a KB result.\n"
+        "  Write [description](url) inline in the text. "
         "You MUST end every answer with a '## References' section that lists every URL used. "
         "FORMAT: '- [Page title](url)' — one line per source. "
         "An answer missing inline citations OR missing the ## References section is WRONG.\n\n"
         "  - Ground every claim in the KB results. Never invent Databricks features.\n"
+        "  - Cite ALL relevant KB results, especially solution accelerators and industry "
+        "examples that match the use case (e.g. fraud detection accelerators for fraud queries).\n"
         "  - NEVER write: 'let me check', 'I would like to inspect', 'I can call', "
         "'before proceeding', 'would you like', 'to further optimize ... I would like to'. "
         "NEVER end with a follow-up question. NEVER ask the user for more information.\n\n"
@@ -128,11 +135,29 @@ class DatabricksExpertAgent(ResponsesAgent):
         "  SQL Warehouse + spark.read; NEVER mention Autoloader, streaming, Kafka,\n"
         "  or always-on endpoints.\n\n"
         "  PART 1 — ## Architecture\n"
-        "  Write the architecture respecting ALL user constraints from the table above. "
+        "  Write a DETAILED architecture respecting ALL user constraints from the table above. "
         "DO NOT mention any existing table, pipeline, or model names anywhere in Part 1. "
         "Every claim must cite a KB url. Every component must reference a Databricks service. "
         "If a KB result mentions a technology that conflicts with user constraints, "
         "ignore it — do NOT include conflicting recommendations.\n\n"
+        "  Structure the architecture with NUMBERED SECTIONS, one per pipeline stage. "
+        "For each section provide:\n"
+        "  1. **Service & purpose** — which Databricks service and why it fits.\n"
+        "  2. **Technical details** — key configurations, formats, partitioning strategy, "
+        "checkpoint or trigger intervals, scaling behaviour.\n"
+        "  3. **Data flow** — what data enters, what transformations occur, what exits.\n"
+        "  4. **Medallion layer** — explicitly label Bronze / Silver / Gold where applicable.\n"
+        "  Aim for 5-8 architecture sections covering ingestion → processing → feature "
+        "engineering → model training → serving → monitoring. "
+        "Each section should be 3-5 sentences minimum.\n\n"
+        "  CITATION REMINDER FOR ARCHITECTURE:\n"
+        "  - EVERY URL you cite MUST come from the KB results above (the url field). "
+        "Do NOT generate or guess URLs like docs.databricks.com/... — if a URL is not in the "
+        "KB results, do NOT use it.\n"
+        "  - Cite ALL relevant KB results, especially solution accelerators and industry "
+        "examples (e.g. fraud detection accelerators for fraud queries, ML solution "
+        "accelerators for ML queries). These are the MOST valuable references.\n"
+        "  - Each architecture section should cite at least one KB result URL.\n\n"
         "  PART 2 — ## Existing Resources in Your Workspace\n"
         "  Read the resource_summary field from check_workspace_state output and follow "
         "its directive exactly.\n"
@@ -174,9 +199,8 @@ class DatabricksExpertAgent(ResponsesAgent):
         # --- ModelConfig bootstrap (serving-time: no args passed) ---
         if spark is None or config is None:
             logger.info("No args passed — bootstrapping from MLflow ModelConfig (serving mode)")
-            from pyspark.sql import SparkSession as _Spark
-
-            spark = spark or _Spark.builder.getOrCreate()
+            # Spark is created lazily by tools when they first need it.
+            # This avoids SparkSession/DatabricksConnect issues at startup.
             mc = mlflow.models.ModelConfig()
             config = ProjectConfig(
                 catalog=mc.get("catalog"),
@@ -189,6 +213,18 @@ class DatabricksExpertAgent(ResponsesAgent):
                 val = mc.get(attr) if mc.get(attr) else None
                 if val:
                     setattr(config, attr, val)
+
+            # Load warehouse_id for live SQL access in serving mode
+            wh_id = mc.get("warehouse_id") if mc.get("warehouse_id") else None
+            if wh_id:
+                config._warehouse_id = wh_id
+                logger.info(f"  SQL warehouse configured: {wh_id}")
+
+            # Load pre-scanned workspace snapshot from model_config (if present)
+            ws_snap = mc.get("workspace_snapshot") if mc.get("workspace_snapshot") else None
+            if ws_snap:
+                config._workspace_snapshot = ws_snap
+                logger.info(f"  Loaded workspace snapshot: {len(ws_snap.get('tables', []))} tables")
 
         self.spark = spark
         self.cfg = config
@@ -262,14 +298,21 @@ class DatabricksExpertAgent(ResponsesAgent):
 
     def _load_tools(self) -> None:
         """Register MCP tools + custom tools into the registry."""
+        # Allow nested asyncio.run() inside gunicorn's event loop (serving mode)
+        nest_asyncio.apply()
+
         # --- MCP: Vector Search index (kb_chunks_index) ---
         vs_mcp_url = f"{self.w.config.host}/api/2.0/mcp/vector-search/{self.cfg.catalog}/{self.cfg.schema}"
         try:
             mcp_tools = asyncio.run(create_mcp_tools(self.w, [vs_mcp_url]))
             self.registry.register_many(mcp_tools)
             logger.info(f"  Loaded {len(mcp_tools)} MCP tool(s): {[t.name for t in mcp_tools]}")
+            if not mcp_tools:
+                logger.warning("  MCP returned 0 tools; registering fallback KB search")
+                self._register_fallback_kb_tool()
         except Exception as exc:
-            logger.warning(f"  Could not load MCP tools ({exc}); continuing with custom tools only")
+            logger.warning(f"  Could not load MCP tools ({exc}); registering fallback KB search")
+            self._register_fallback_kb_tool()
 
         # --- Genie MCP (if configured) ---
         if getattr(self.cfg, "genie_space_id", None):
@@ -282,11 +325,74 @@ class DatabricksExpertAgent(ResponsesAgent):
                 logger.warning(f"  Could not load Genie MCP tools ({exc})")
 
         # --- Custom local tools ---
+        # Pass pre-scanned workspace snapshot and warehouse_id if available (serving mode).
+        ws_snapshot = getattr(self.cfg, "_workspace_snapshot", None)
+        warehouse_id = getattr(self.cfg, "_warehouse_id", None) or getattr(self.cfg, "warehouse_id", None)
         custom_tools = DatabricksExpertTools(
-            spark=self.spark, config=self.cfg, workspace_client=self.w
+            spark=self.spark, config=self.cfg, workspace_client=self.w,
+            workspace_snapshot=ws_snapshot,
+            warehouse_id=warehouse_id,
         ).build_tool_infos()
         self.registry.register_many(custom_tools)
         logger.info(f"  Registered {len(custom_tools)} custom tool(s): {[t.name for t in custom_tools]}")
+
+    def _register_fallback_kb_tool(self) -> None:
+        """Register a direct Vector Search tool as fallback when MCP is unavailable.
+
+        Uses the databricks-vectorsearch SDK directly, which works in the serving
+        container because DatabricksVectorSearchIndex is declared as a resource.
+        The tool name follows MCP naming convention (catalog__schema__index) so the
+        KB pre-fetch logic in chat() still detects it via the "__" pattern.
+        """
+        from arch_designer_agent.mcp import ToolInfo
+
+        index_name = f"{self.cfg.catalog}.{self.cfg.schema}.kb_chunks_index"
+        tool_name = f"{self.cfg.catalog}__{self.cfg.schema}__kb_chunks_index"
+
+        def _kb_search(query: str) -> str:
+            from databricks.vector_search.client import VectorSearchClient
+            vs_client = VectorSearchClient()
+            index = vs_client.get_index(index_name=index_name)
+            results = index.similarity_search(
+                query_text=query,
+                columns=["chunk_id", "text", "title", "source_type",
+                         "source_repo", "section_header", "url"],
+                num_results=5,
+                query_type="hybrid",
+            )
+            # Format results as list of dicts (same structure MCP returns)
+            rows = results.get("result", {}).get("data_array", [])
+            cols = [c["name"] for c in results.get("manifest", {}).get("columns", [])]
+            formatted = [dict(zip(cols, row)) for row in rows]
+            return json.dumps(formatted, default=str)
+
+        fallback_tool = ToolInfo(
+            name=tool_name,
+            spec={
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": (
+                        "Search the Databricks knowledge base for architecture patterns, "
+                        "best practices, and solution accelerators. Returns relevant "
+                        "documentation chunks with URLs for citation."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "Search query for the knowledge base.",
+                            }
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            exec_fn=_kb_search,
+        )
+        self.registry.register(fallback_tool)
+        logger.info(f"  Registered fallback KB tool: {tool_name}")
 
     @mlflow.trace(span_type=SpanType.RETRIEVER, name="memory_load")
     def _load_memory(self, conversation_id: str) -> list[dict[str, Any]]:
@@ -658,6 +764,109 @@ class DatabricksExpertAgent(ResponsesAgent):
         )
 
 
+
+# Internal tables that are agent infrastructure — excluded from workspace snapshots.
+_SNAPSHOT_INTERNAL_TABLES = {"kb_chunks", "databricks_knowledge_base", "kb_chunks_index"}
+_SNAPSHOT_INTERNAL_SUBSTRINGS = {
+    "kb-pipeline", "kb_pipeline", "kb_chunks", "knowledge_base",
+    "knowledge-base", "llmops_course", "online_index_view", "event_log_",
+}
+
+
+def _is_snapshot_internal(name: str) -> bool:
+    """Return True if the resource name matches internal agent infrastructure."""
+    name_lower = name.lower()
+    return any(pat in name_lower for pat in _SNAPSHOT_INTERNAL_SUBSTRINGS)
+
+
+def _prescan_workspace_state(w: WorkspaceClient, cfg: ProjectConfig) -> dict[str, Any]:
+    """Scan workspace resources at registration time using full notebook permissions.
+
+    Returns a snapshot dict that gets embedded in model_config for serving-time use.
+    """
+    snapshot: dict[str, Any] = {}
+
+    # Tables
+    try:
+        all_tables = list(w.tables.list(catalog_name=cfg.catalog, schema_name=cfg.schema))
+        snapshot["tables"] = [
+            {"name": t.name, "comment": t.comment or ""}
+            for t in all_tables
+            if t.name not in _SNAPSHOT_INTERNAL_TABLES and not _is_snapshot_internal(t.name)
+        ]
+    except Exception as exc:
+        logger.warning(f"Pre-scan tables failed: {exc}")
+        snapshot["tables"] = []
+
+    # Serving endpoints
+    try:
+        all_se = list(w.serving_endpoints.list())
+        snapshot["serving_endpoints"] = [
+            {"name": e.name, "state": str(e.state.config_update) if e.state else "unknown"}
+            for e in all_se
+            if not _is_snapshot_internal(e.name)
+        ]
+    except Exception as exc:
+        logger.warning(f"Pre-scan serving endpoints failed: {exc}")
+        snapshot["serving_endpoints"] = []
+
+    # Pipelines
+    try:
+        all_dlt = list(w.pipelines.list_pipelines())
+        snapshot["pipelines"] = [
+            {
+                "name": p.name,
+                "state": str(p.latest_updates[0].state) if p.latest_updates else "no_runs",
+            }
+            for p in all_dlt
+            if p.name and not _is_snapshot_internal(p.name)
+        ]
+    except Exception as exc:
+        logger.warning(f"Pre-scan pipelines failed: {exc}")
+        snapshot["pipelines"] = []
+
+    # Registered models
+    try:
+        all_models = list(w.registered_models.list(catalog_name=cfg.catalog, schema_name=cfg.schema))
+        snapshot["models"] = [
+            {"name": m.name} for m in all_models if not _is_snapshot_internal(m.name)
+        ]
+    except Exception as exc:
+        logger.warning(f"Pre-scan models failed: {exc}")
+        snapshot["models"] = []
+
+    # Jobs
+    try:
+        all_jobs = list(w.jobs.list())
+        snapshot["jobs"] = [
+            {
+                "name": j.settings.name,
+                "schedule": str(j.settings.schedule.quartz_cron_expression)
+                if j.settings and j.settings.schedule
+                else "manual",
+            }
+            for j in all_jobs
+            if j.settings and j.settings.name and not _is_snapshot_internal(j.settings.name)
+        ]
+    except Exception as exc:
+        logger.warning(f"Pre-scan jobs failed: {exc}")
+        snapshot["jobs"] = []
+
+    # Vector search endpoints
+    try:
+        all_vs = list(w.vector_search_endpoints.list_endpoints().get("endpoints", []))
+        snapshot["vector_search_endpoints"] = [
+            {"name": e.get("name", ""), "state": e.get("endpoint_status", {}).get("state", "unknown")}
+            for e in all_vs
+            if not _is_snapshot_internal(e.get("name", ""))
+        ]
+    except Exception as exc:
+        logger.warning(f"Pre-scan VS endpoints failed: {exc}")
+        snapshot["vector_search_endpoints"] = []
+
+    return snapshot
+
+
 def log_register_agent(
     cfg: ProjectConfig,
     git_sha: str,
@@ -684,6 +893,8 @@ def log_register_agent(
     Returns:
         RegisteredModel from Unity Catalog.
     """
+    w = WorkspaceClient()
+
     # Build resources list — only include optional endpoints if configured
     resources = [
         DatabricksServingEndpoint(endpoint_name=cfg.llm_endpoint),
@@ -693,6 +904,33 @@ def log_register_agent(
     ]
     if cfg.embedding_endpoint:
         resources.append(DatabricksServingEndpoint(endpoint_name=cfg.embedding_endpoint))
+    if cfg.warehouse_id:
+        resources.append(DatabricksSQLWarehouse(warehouse_id=cfg.warehouse_id))
+
+    # ------------------------------------------------------------------
+    # Pre-scan workspace state at registration time (full notebook perms).
+    # The serving container's scoped token cannot list UC tables, jobs, or
+    # pipelines.  By scanning here and embedding the snapshot in model_config,
+    # check_workspace_state reads from config instead of live SDK calls.
+    # All discovered tables are also declared as DatabricksTable resources
+    # so profile_table can read them at serving time.
+    # ------------------------------------------------------------------
+    workspace_snapshot = _prescan_workspace_state(w, cfg)
+    logger.info(
+        f"Pre-scanned workspace: {len(workspace_snapshot.get('tables', []))} tables, "
+        f"{len(workspace_snapshot.get('jobs', []))} jobs, "
+        f"{len(workspace_snapshot.get('pipelines', []))} pipelines, "
+        f"{len(workspace_snapshot.get('models', []))} models, "
+        f"{len(workspace_snapshot.get('serving_endpoints', []))} serving endpoints"
+    )
+
+    # Declare all user tables as resources so the serving token can read them
+    declared_tables = {r.name for r in resources if isinstance(r, DatabricksTable)}
+    for t in workspace_snapshot.get("tables", []):
+        fqn = f"{cfg.catalog}.{cfg.schema}.{t['name']}"
+        if fqn not in declared_tables:
+            resources.append(DatabricksTable(table_name=fqn))
+            declared_tables.add(fqn)
 
     # Only include fields the agent actually needs at serving time.
     model_config = {
@@ -702,6 +940,8 @@ def log_register_agent(
         "system_prompt": cfg.system_prompt,
         "lakebase_instance": cfg.lakebase_instance,
         "genie_space_id": getattr(cfg, "genie_space_id", None),
+        "warehouse_id": cfg.warehouse_id or None,
+        "workspace_snapshot": workspace_snapshot,
     }
 
     test_request = {"input": [{"role": "user", "content": "What is Delta Live Tables and when should I use it?"}]}
@@ -713,12 +953,43 @@ def log_register_agent(
         run_name=f"arch-agent-{ts}",
         tags={"git_sha": git_sha, "run_id": run_id},
     ):
+        # Explicit pip requirements — prevents MLflow from auto-inferring the
+        # local project package (llmops-databricks-course-pratikhetan) which
+        # is not on PyPI and would break container builds.
+        # env_pack in register_model() captures the full notebook environment
+        # (including the local package), so these are only a fallback.
+        pip_reqs = [
+            "cffi==1.17.1",
+            "cloudpickle==3.1.1",
+            "numpy==2.4.0",
+            "pandas==2.3.0",
+            "pyarrow==22.0.0",
+            "databricks-sdk==0.85.0",
+            "pydantic==2.11.7",
+            "loguru==0.7.3",
+            "python-dotenv==1.1.1",
+            "databricks-vectorsearch==0.63",
+            "openai==2.8.0",
+            "databricks-mcp==0.4.0",
+            "backoff==2.2.1",
+            "mlflow==3.10.1",
+            "nest-asyncio==1.6.0",
+            "requests==2.32.3",
+            "trafilatura==2.0.0",
+            "langchain-text-splitters==0.3.8",
+            "databricks-agents==1.8.2",
+            "psycopg==3.3.2",
+            "psycopg-pool==3.3.0",
+            "psycopg[binary]==3.3.2",
+        ]
+
         model_info = mlflow.pyfunc.log_model(
             name="agent",
             python_model=agent_code_path,
             resources=resources,
             input_example=test_request,
             model_config=model_config,
+            pip_requirements=pip_reqs,
         )
         if evaluation_metrics:
             mlflow.log_metrics(evaluation_metrics)
@@ -727,6 +998,7 @@ def log_register_agent(
     registered_model = mlflow.register_model(
         model_uri=model_info.model_uri,
         name=model_name,
+        env_pack="databricks_model_serving",
         tags={"git_sha": git_sha, "run_id": run_id},
     )
     logger.info(f"Registered version: {registered_model.version}")
