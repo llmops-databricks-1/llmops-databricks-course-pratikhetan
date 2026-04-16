@@ -551,9 +551,18 @@ class DatabricksExpertAgent(ResponsesAgent):
             prior_messages = request_history
             logger.info(f"  Lakebase empty/unavailable — using {len(prior_messages)} message(s) from request history")
 
+        # Normalize any array-formatted content in prior messages.
+        # The Responses API sends assistant content as [{"text": "...", "type": "output_text"}]
+        # but the Chat Completions API requires plain strings.
+        normalized_prior: list[dict[str, Any]] = []
+        for msg in prior_messages:
+            normalized = dict(msg)  # shallow copy
+            normalized["content"] = self._normalize_content(msg.get("content"))
+            normalized_prior.append(normalized)
+
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
-            *prior_messages,
+            *normalized_prior,
             {"role": "user", "content": user_message},
         ]
         save_from_index = 1 + len(prior_messages)
@@ -752,6 +761,29 @@ class DatabricksExpertAgent(ResponsesAgent):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _normalize_content(content: Any) -> str:
+        """Normalize message content to a plain string.
+
+        The Responses API (used by AI Playground) sends assistant messages with
+        content as an array of objects: [{"text": "...", "type": "output_text"}].
+        The Chat Completions API expected by Databricks LLM endpoints requires
+        content to be a plain string.  This method handles the conversion.
+        """
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    parts.append(item.get("text", ""))
+                elif isinstance(item, str):
+                    parts.append(item)
+            return "\n".join(parts)
+        return str(content)
+
+    @staticmethod
     def _extract_conversation(request: ResponsesAgentRequest) -> tuple[str, list[dict[str, Any]]]:
         """Extract the last user message and prior conversation from the request.
 
@@ -764,9 +796,10 @@ class DatabricksExpertAgent(ResponsesAgent):
 
         for item in request.input:
             role = role_map.get(item.role, item.role)
+            content = DatabricksExpertAgent._normalize_content(item.content)
             if role == "user":
-                last_user_message = item.content or ""
-            all_messages.append({"role": role, "content": item.content or ""})
+                last_user_message = content
+            all_messages.append({"role": role, "content": content})
 
         # Prior messages = everything except the last user message
         prior = all_messages[:-1] if all_messages else []
@@ -783,9 +816,11 @@ class DatabricksExpertAgent(ResponsesAgent):
         For production multi-tenant use, clients should send an explicit
         session_id via custom_inputs instead.
         """
-        first_user_msg = next(
-            (item.content for item in request.input if item.role == "user"),
-            "",
+        first_user_msg = DatabricksExpertAgent._normalize_content(
+            next(
+                (item.content for item in request.input if item.role == "user"),
+                "",
+            )
         )
         return f"auto_{hashlib.sha256(first_user_msg.encode()).hexdigest()[:16]}"
 
