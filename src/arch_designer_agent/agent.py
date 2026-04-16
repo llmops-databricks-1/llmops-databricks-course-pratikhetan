@@ -413,17 +413,50 @@ class DatabricksExpertAgent(ResponsesAgent):
 
     # --- Constraint keywords for the gate (STEP 2a enforcement) ---
     _DESIGN_TRIGGERS = {
-        "design", "architect", "build", "implement", "set up",
-        "recommend", "create a pipeline", "how should i", "what architecture",
+        "design",
+        "architect",
+        "build",
+        "implement",
+        "set up",
+        "recommend",
+        "create a pipeline",
+        "how should i",
+        "what architecture",
     }
     _CONSTRAINT_KEYWORDS = {
-        "latency", "speed", "real-time", "realtime", "real time",
-        "batch", "streaming", "compliance", "cost", "budget",
-        "team size", "scale", "hourly", "daily", "weekly",
-        "kafka", "cdc", "gdpr", "hipaa", "sox", "audit",
-        "simple", "simplicity", "small team", "large",
-        "high volume", "millions", "low latency", "near-real-time",
-        "scheduled", "incremental", "cheap", "affordable",
+        "latency",
+        "speed",
+        "real-time",
+        "realtime",
+        "real time",
+        "batch",
+        "streaming",
+        "compliance",
+        "cost",
+        "budget",
+        "team size",
+        "scale",
+        "hourly",
+        "daily",
+        "weekly",
+        "kafka",
+        "cdc",
+        "gdpr",
+        "hipaa",
+        "sox",
+        "audit",
+        "simple",
+        "simplicity",
+        "small team",
+        "large",
+        "high volume",
+        "millions",
+        "low latency",
+        "near-real-time",
+        "scheduled",
+        "incremental",
+        "cheap",
+        "affordable",
     }
 
     @staticmethod
@@ -557,8 +590,7 @@ class DatabricksExpertAgent(ResponsesAgent):
                 prior_messages = self._load_memory(conversation_id)
                 if prior_messages:
                     logger.info(
-                        f"  Loaded {len(prior_messages)} prior message(s) from Lakebase "
-                        f"for '{conversation_id}'"
+                        f"  Loaded {len(prior_messages)} prior message(s) from Lakebase for '{conversation_id}'"
                     )
             except Exception as exc:
                 logger.warning(f"  Lakebase load failed ({exc}) — falling back to request_history")
@@ -581,10 +613,12 @@ class DatabricksExpertAgent(ResponsesAgent):
         # This prevents the LLM from ignoring STEP 2a in the system prompt.
         if not prior_messages and self._needs_clarification(user_message):
             logger.info("  Constraint gate triggered — no constraints found in DESIGN query")
-            clarification = DatabricksExpertTools.clarify_requirements({
-                "missing_constraints": ["latency", "ingestion", "governance", "cost"],
-                "query": user_message,
-            })
+            clarification = DatabricksExpertTools.clarify_requirements(
+                {
+                    "missing_constraints": ["latency", "ingestion", "governance", "cost"],
+                    "query": user_message,
+                }
+            )
             answer = clarification["question"]
             messages.append({"role": "assistant", "content": answer})
             if conversation_id and self._memory:
