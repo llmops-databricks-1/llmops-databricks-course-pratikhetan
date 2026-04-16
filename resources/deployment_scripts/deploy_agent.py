@@ -14,6 +14,7 @@ Parameters (set via Databricks Job base_parameters):
 from databricks import agents
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.runtime import dbutils
+from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
 from loguru import logger
 from mlflow import MlflowClient
 
@@ -96,8 +97,8 @@ w = WorkspaceClient()
 w.serving_endpoints.set_permissions(
     serving_endpoint_id=endpoint_name,
     access_control_list=[
-        {"group_name": "users", "permission_level": "CAN_QUERY"},
-        {"user_name": "pratikhetan@gmail.com", "permission_level": "CAN_MANAGE"},
+        AccessControlRequest(group_name="users", permission_level=PermissionLevel.CAN_QUERY),
+        AccessControlRequest(user_name="pratikhetan@gmail.com", permission_level=PermissionLevel.CAN_MANAGE),
     ],
 )
 logger.info(f"Permissions set on endpoint {endpoint_name}")
