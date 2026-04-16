@@ -761,7 +761,7 @@ class DatabricksExpertAgent(ResponsesAgent):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_content(content: Any) -> str:
+    def _normalize_content(content: str | list | None) -> str:
         """Normalize message content to a plain string.
 
         The Responses API (used by AI Playground) sends assistant messages with
