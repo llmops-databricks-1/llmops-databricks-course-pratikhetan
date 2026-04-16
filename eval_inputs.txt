@@ -1,23 +1,12 @@
 What is Delta Live Tables and when should I use it on Databricks?
 Design a real-time fraud detection architecture on Databricks with low latency requirements.
 What is the medallion architecture and how should I implement it?
-Design a batch analytics pipeline for a large e-commerce platform on Databricks.
 How should I implement data governance and access controls in Unity Catalog?
 Design a machine learning feature store architecture on Databricks.
-What Databricks services should I use for a real-time ML inference pipeline?
 How do I architect a cost-efficient data lakehouse for a small analytics team?
 Design a CDC-based ingestion pipeline from an operational database into Databricks.
 What is the difference between Delta Sync Index and Direct Access Index in Vector Search?
-Design a demand forecasting architecture on Databricks for a retail company with weekly batch predictions and seasonal data.
-What is the best way to make sourdough bread at home?
-How do I fix a memory leak in a Java application?
-Who won the FIFA World Cup in 2022?
-What is the capital city of Australia?
-Write me a Python script to scrape Twitter.
-How do I set up a Kafka cluster on AWS without Databricks?
-What is the difference between PostgreSQL and MySQL?
-Can you recommend a good project management tool for remote teams?
-How do I center a div in CSS?
-Design a real-time recommendation engine for an e-commerce platform using Databricks.
 What monitoring and observability tools should I use for Databricks pipelines in production?
 How does Auto Loader differ from COPY INTO for incremental data ingestion on Databricks?
+What is the best way to make sourdough bread at home?
+How do I center a div in CSS?
