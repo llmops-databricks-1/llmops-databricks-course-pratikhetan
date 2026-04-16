@@ -78,3 +78,17 @@ agents.deploy(
 )
 
 logger.info("Deployment complete!")
+
+# COMMAND ----------
+
+# Grant CAN_QUERY to all workspace users and CAN_MANAGE to the deploying user
+# so the endpoint is visible in the UI regardless of which SPN deployed it.
+w = WorkspaceClient()
+w.serving_endpoints.set_permissions(
+    serving_endpoint_id=endpoint_name,
+    access_control_list=[
+        {"group_name": "users", "permission_level": "CAN_QUERY"},
+        {"user_name": "pratikhetan@gmail.com", "permission_level": "CAN_MANAGE"},
+    ],
+)
+logger.info(f"Permissions set on endpoint {endpoint_name}")
