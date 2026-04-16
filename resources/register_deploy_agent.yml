@@ -1,14 +1,10 @@
 resources:
   jobs:
-    kb_pipeline_job:
-      name: kb-pipeline
-      description: >
-        End-to-end knowledge base pipeline:
-          Task 1 — Ingest new docs into databricks_knowledge_base
-          Task 2 — Chunk new docs + sync Vector Search index
+    register_deploy_agent:
+      name: arch-designer-agent-register-deploy-pipeline
       tags:
         project_name: "arch-designer-agent"
-
+        environment: ${bundle.target}
       environments:
         - environment_key: default
           spec:
@@ -17,22 +13,21 @@ resources:
               - ../dist/*.whl
 
       tasks:
-        - task_key: ingest_knowledge_base
+        - task_key: log_register_agent
           environment_key: default
           notebook_task:
-            notebook_path: ../notebooks/1.3_databricks_knowledge_ingestion.py
+            notebook_path: deployment_scripts/log_register_agent.py
             base_parameters:
               env: ${bundle.target}
               git_sha: "${var.git_sha}"
               run_id: "{{job.run_id}}"
 
-        - task_key: chunk_and_sync
+        - task_key: deploy_agent
           depends_on:
-            - task_key: ingest_knowledge_base
+            - task_key: log_register_agent
           environment_key: default
           notebook_task:
-            notebook_path: ../notebooks/run_chunk_and_sync.py
+            notebook_path: deployment_scripts/deploy_agent.py
             base_parameters:
               env: ${bundle.target}
               git_sha: "${var.git_sha}"
-              run_id: "{{job.run_id}}"

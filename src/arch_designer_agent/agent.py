@@ -20,6 +20,7 @@ from loguru import logger
 from mlflow import MlflowClient
 from mlflow.entities import SpanType
 from mlflow.models.resources import (
+    DatabricksLakebase,
     DatabricksServingEndpoint,
     DatabricksSQLWarehouse,
     DatabricksTable,
@@ -911,6 +912,8 @@ def log_register_agent(
         resources.append(DatabricksServingEndpoint(endpoint_name=cfg.embedding_endpoint))
     if cfg.warehouse_id:
         resources.append(DatabricksSQLWarehouse(warehouse_id=cfg.warehouse_id))
+    if cfg.lakebase_instance:
+        resources.append(DatabricksLakebase(database_instance_name=cfg.lakebase_instance))
 
     # ------------------------------------------------------------------
     # Pre-scan workspace state at registration time (full notebook perms).

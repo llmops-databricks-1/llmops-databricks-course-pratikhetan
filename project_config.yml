@@ -14,15 +14,19 @@ dev:
   usage_policy_id: null
   experiment_name: /Shared/arch-designer-agent
   knowledge_base_table: databricks_knowledge_base
+
 acc:
-  catalog: mlops_acc
+  catalog: mlops_dev
   schema: pratikhe
   volume: llmops_files
-  llm_endpoint: databricks-meta-llama-3-1-70b-instruct
+  llm_endpoint: databricks-llama-4-maverick
   embedding_endpoint: databricks-gte-large-en
   warehouse_id: 96e26e80fcd91931
   vector_search_endpoint: llmops_course_vs_endpoint
   genie_space_id: null
+  lakebase_instance: arch-agent-memory
+  usage_policy_id: null
+  experiment_name: /Shared/arch-designer-agent
   knowledge_base_table: databricks_knowledge_base
 
 # Production environment
@@ -30,11 +34,14 @@ prd:
   catalog: mlops_prd
   schema: pratikhe
   volume: llmops_files
-  llm_endpoint: databricks-meta-llama-3-1-70b-instruct
+  llm_endpoint: databricks-llama-4-maverick
   embedding_endpoint: databricks-gte-large-en
   warehouse_id: 96e26e80fcd91931
   vector_search_endpoint: llmops_course_vs_endpoint
-  genie_space_id: 01f113061bf41578baff744a41bd9ab0
+  genie_space_id: null
+  lakebase_instance: arch-agent-memory
+  usage_policy_id: null
+  experiment_name: /Shared/arch-designer-agent
   knowledge_base_table: databricks_knowledge_base
 
 # Model configuration

@@ -3,7 +3,7 @@ resources:
     databricks_knowledge_ingestion_job:
       name: databricks-knowledge-ingestion
       tags:
-        project_name: "llmops-databricks-course-pratikhetan"
+        project_name: "arch-designer-agent"
 
       environments:
         - environment_key: default
