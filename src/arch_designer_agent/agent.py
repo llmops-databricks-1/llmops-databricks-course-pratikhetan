@@ -73,13 +73,13 @@ class DatabricksExpertAgent(ResponsesAgent):
         "Databricks documentation has already been retrieved and is shown above as KB results. "
         "DO NOT call the KB search tool again under any circumstances — it has already run.\n\n"
         "**IF DESIGN — follow these steps in strict order, one tool call per iteration:**\n\n"
-        "  STEP 2a. Decide whether the query provides enough context to design "\n
+        "  STEP 2a. Decide whether the query provides enough context to design "
         "an architecture. Use your judgment:\n"
-        "  - If the query names a specific use case, architecture pattern, or domain "\n
-        "(e.g. feature store, CDC pipeline, demand forecasting, medallion lakehouse, "\n
+        "  - If the query names a specific use case, architecture pattern, or domain "
+        "(e.g. feature store, CDC pipeline, demand forecasting, medallion lakehouse, "
         "RAG chatbot, ML pipeline) → you have enough context. Go to STEP 2b.\n"
-        "  - If the query is genuinely vague with no use case, no domain, and no "\n
-        "pattern (e.g. just 'design an architecture' or 'help me build something') "\n
+        "  - If the query is genuinely vague with no use case, no domain, and no "
+        "pattern (e.g. just 'design an architecture' or 'help me build something') "
         "→ call clarify_requirements to ask what they want to build, then stop.\n\n"
         "  Examples:\n"
         "  - 'Design an architecture' → CLARIFY (no use case)\n"
