@@ -73,10 +73,21 @@ class DatabricksExpertAgent(ResponsesAgent):
         "Databricks documentation has already been retrieved and is shown above as KB results. "
         "DO NOT call the KB search tool again under any circumstances — it has already run.\n\n"
         "**IF DESIGN — follow these steps in strict order, one tool call per iteration:**\n\n"
-        "  STEP 2a. Check if the query mentions ANY of: latency, speed, real-time, batch, "
-        "streaming, compliance, cost, budget, team size, scale. "
-        "If none → call clarify_requirements, then stop. "
-        "If at least one → go to STEP 2b.\n\n"
+        "  STEP 2a. Decide whether the query provides enough context to design "\n
+        "an architecture. Use your judgment:\n"
+        "  - If the query names a specific use case, architecture pattern, or domain "\n
+        "(e.g. feature store, CDC pipeline, demand forecasting, medallion lakehouse, "\n
+        "RAG chatbot, ML pipeline) → you have enough context. Go to STEP 2b.\n"
+        "  - If the query is genuinely vague with no use case, no domain, and no "\n
+        "pattern (e.g. just 'design an architecture' or 'help me build something') "\n
+        "→ call clarify_requirements to ask what they want to build, then stop.\n\n"
+        "  Examples:\n"
+        "  - 'Design an architecture' → CLARIFY (no use case)\n"
+        "  - 'Design a demand forecasting system' → PROCEED (specific use case)\n"
+        "  - 'Design a feature store architecture' → PROCEED (specific pattern)\n"
+        "  - 'Build a data pipeline for us' → CLARIFY (no domain, no pattern)\n"
+        "  - 'Architect a CDC ingestion pipeline' → PROCEED (specific pattern)\n"
+        "  - 'Help me build something on Databricks' → CLARIFY (too vague)\n\n"
         "  STEP 2b. Call check_workspace_state with relevant keywords. "
         "This is MANDATORY. Output ONLY this tool call — no text, no answer.\n\n"
         "  STEP 2c. After check_workspace_state returns, read the existing_relevant field:\n"
@@ -411,66 +422,6 @@ class DatabricksExpertAgent(ResponsesAgent):
         if self._memory:
             self._memory.save_messages(conversation_id, messages)
 
-    # --- Constraint keywords for the gate (STEP 2a enforcement) ---
-    _DESIGN_TRIGGERS = {
-        "design",
-        "architect",
-        "build",
-        "implement",
-        "set up",
-        "recommend",
-        "create a pipeline",
-        "how should i",
-        "what architecture",
-    }
-    _CONSTRAINT_KEYWORDS = {
-        "latency",
-        "speed",
-        "real-time",
-        "realtime",
-        "real time",
-        "batch",
-        "streaming",
-        "compliance",
-        "cost",
-        "budget",
-        "team size",
-        "scale",
-        "hourly",
-        "daily",
-        "weekly",
-        "kafka",
-        "cdc",
-        "gdpr",
-        "hipaa",
-        "sox",
-        "audit",
-        "simple",
-        "simplicity",
-        "small team",
-        "large",
-        "high volume",
-        "millions",
-        "low latency",
-        "near-real-time",
-        "scheduled",
-        "incremental",
-        "cheap",
-        "affordable",
-    }
-
-    @staticmethod
-    def _needs_clarification(user_message: str) -> bool:
-        """Return True if the query is a DESIGN query with no constraint keywords.
-
-        Used by the constraint gate in chat() to enforce STEP 2a without
-        relying on the LLM to follow the system prompt.
-        """
-        msg_lower = user_message.lower()
-        is_design = any(trigger in msg_lower for trigger in DatabricksExpertAgent._DESIGN_TRIGGERS)
-        has_constraints = any(kw in msg_lower for kw in DatabricksExpertAgent._CONSTRAINT_KEYWORDS)
-        return is_design and not has_constraints
-
     # Regex patterns for inline sentences about absence of resources.
     # These catch cases where the LLM ignores the system prompt and writes
     # about missing resources outside of the ## Existing Resources heading.
@@ -606,24 +557,6 @@ class DatabricksExpertAgent(ResponsesAgent):
             {"role": "user", "content": user_message},
         ]
         save_from_index = 1 + len(prior_messages)
-
-        # --- Constraint Gate (hard enforcement of STEP 2a) ---
-        # If this is a DESIGN query with no constraint keywords, call
-        # clarify_requirements directly without entering the LLM loop.
-        # This prevents the LLM from ignoring STEP 2a in the system prompt.
-        if not prior_messages and self._needs_clarification(user_message):
-            logger.info("  Constraint gate triggered — no constraints found in DESIGN query")
-            clarification = DatabricksExpertTools.clarify_requirements(
-                {
-                    "missing_constraints": ["latency", "ingestion", "governance", "cost"],
-                    "query": user_message,
-                }
-            )
-            answer = clarification["question"]
-            messages.append({"role": "assistant", "content": answer})
-            if conversation_id and self._memory:
-                self._save_memory(conversation_id, messages[save_from_index:])
-            return answer
 
         # Pre-fetch KB results before the LLM loop so the LLM always starts with
         # grounded documentation context — no tool-ordering guard needed.
