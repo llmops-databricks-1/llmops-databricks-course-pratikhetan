@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feature/week5_ci_cd
   pull_request:
     branches:
       - main
