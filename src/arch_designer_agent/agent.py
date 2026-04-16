@@ -1,6 +1,7 @@
 """Databricks Expert Architecture Agent — LLM-driven tool loop."""
 
 import asyncio
+import hashlib
 import json
 import re
 import warnings
@@ -410,6 +411,33 @@ class DatabricksExpertAgent(ResponsesAgent):
         if self._memory:
             self._memory.save_messages(conversation_id, messages)
 
+    # --- Constraint keywords for the gate (STEP 2a enforcement) ---
+    _DESIGN_TRIGGERS = {
+        "design", "architect", "build", "implement", "set up",
+        "recommend", "create a pipeline", "how should i", "what architecture",
+    }
+    _CONSTRAINT_KEYWORDS = {
+        "latency", "speed", "real-time", "realtime", "real time",
+        "batch", "streaming", "compliance", "cost", "budget",
+        "team size", "scale", "hourly", "daily", "weekly",
+        "kafka", "cdc", "gdpr", "hipaa", "sox", "audit",
+        "simple", "simplicity", "small team", "large",
+        "high volume", "millions", "low latency", "near-real-time",
+        "scheduled", "incremental", "cheap", "affordable",
+    }
+
+    @staticmethod
+    def _needs_clarification(user_message: str) -> bool:
+        """Return True if the query is a DESIGN query with no constraint keywords.
+
+        Used by the constraint gate in chat() to enforce STEP 2a without
+        relying on the LLM to follow the system prompt.
+        """
+        msg_lower = user_message.lower()
+        is_design = any(trigger in msg_lower for trigger in DatabricksExpertAgent._DESIGN_TRIGGERS)
+        has_constraints = any(kw in msg_lower for kw in DatabricksExpertAgent._CONSTRAINT_KEYWORDS)
+        return is_design and not has_constraints
+
     # Regex patterns for inline sentences about absence of resources.
     # These catch cases where the LLM ignores the system prompt and writes
     # about missing resources outside of the ## Existing Resources heading.
@@ -500,6 +528,7 @@ class DatabricksExpertAgent(ResponsesAgent):
         user_message: str,
         conversation_id: str | None = None,
         max_iterations: int = 10,
+        request_history: list[dict[str, Any]] | None = None,
     ) -> str:
         """Run an agentic conversation turn.
 
@@ -507,21 +536,37 @@ class DatabricksExpertAgent(ResponsesAgent):
         The loop continues until the LLM returns a final text answer.
 
         Args:
-            user_message: The user's query.
+            user_message: The user's query (should be the LAST user message).
             conversation_id: Optional session key for multi-turn memory (requires
                 lakebase_instance to be configured).  When provided, prior turns
                 are loaded from Lakebase before the LLM call and the new turns
                 are persisted afterward.
             max_iterations: Safety cap on tool-call rounds.
+            request_history: Prior conversation messages from the Responses API
+                request.  When provided, these are used as conversation context
+                (preferred over Lakebase for reliability).
 
         Returns:
             Final text answer from the LLM.
         """
+        # --- Build prior conversation context ---
+        # Priority: Lakebase memory (persistent) > request_history (fallback)
         prior_messages: list[dict[str, Any]] = []
         if conversation_id and self._memory:
-            prior_messages = self._load_memory(conversation_id)
-            if prior_messages:
-                logger.info(f"  Loaded {len(prior_messages)} prior message(s) for conversation '{conversation_id}'")
+            try:
+                prior_messages = self._load_memory(conversation_id)
+                if prior_messages:
+                    logger.info(
+                        f"  Loaded {len(prior_messages)} prior message(s) from Lakebase "
+                        f"for '{conversation_id}'"
+                    )
+            except Exception as exc:
+                logger.warning(f"  Lakebase load failed ({exc}) — falling back to request_history")
+                prior_messages = []
+
+        if not prior_messages and request_history:
+            prior_messages = request_history
+            logger.info(f"  Lakebase empty/unavailable — using {len(prior_messages)} message(s) from request history")
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
@@ -529,6 +574,22 @@ class DatabricksExpertAgent(ResponsesAgent):
             {"role": "user", "content": user_message},
         ]
         save_from_index = 1 + len(prior_messages)
+
+        # --- Constraint Gate (hard enforcement of STEP 2a) ---
+        # If this is a DESIGN query with no constraint keywords, call
+        # clarify_requirements directly without entering the LLM loop.
+        # This prevents the LLM from ignoring STEP 2a in the system prompt.
+        if not prior_messages and self._needs_clarification(user_message):
+            logger.info("  Constraint gate triggered — no constraints found in DESIGN query")
+            clarification = DatabricksExpertTools.clarify_requirements({
+                "missing_constraints": ["latency", "ingestion", "governance", "cost"],
+                "query": user_message,
+            })
+            answer = clarification["question"]
+            messages.append({"role": "assistant", "content": answer})
+            if conversation_id and self._memory:
+                self._save_memory(conversation_id, messages[save_from_index:])
+            return answer
 
         # Pre-fetch KB results before the LLM loop so the LLM always starts with
         # grounded documentation context — no tool-ordering guard needed.
@@ -723,6 +784,44 @@ class DatabricksExpertAgent(ResponsesAgent):
     # MLflow pyfunc / ResponsesAgent serving interface
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _extract_conversation(request: ResponsesAgentRequest) -> tuple[str, list[dict[str, Any]]]:
+        """Extract the last user message and prior conversation from the request.
+
+        Returns:
+            (last_user_message, prior_messages_as_openai_dicts)
+        """
+        role_map = {"user": "user", "assistant": "assistant", "system": "system"}
+        all_messages: list[dict[str, Any]] = []
+        last_user_message = ""
+
+        for item in request.input:
+            role = role_map.get(item.role, item.role)
+            if role == "user":
+                last_user_message = item.content or ""
+            all_messages.append({"role": role, "content": item.content or ""})
+
+        # Prior messages = everything except the last user message
+        prior = all_messages[:-1] if all_messages else []
+        return last_user_message, prior
+
+    @staticmethod
+    def _derive_session_id(request: ResponsesAgentRequest) -> str:
+        """Generate a stable session ID when the client doesn't provide one.
+
+        Uses a SHA-256 hash of the FIRST user message as a deterministic key.
+        Conversations starting with the same initial message share a session,
+        which is the expected behaviour for Playground-style testing.
+
+        For production multi-tenant use, clients should send an explicit
+        session_id via custom_inputs instead.
+        """
+        first_user_msg = next(
+            (item.content for item in request.input if item.role == "user"),
+            "",
+        )
+        return f"auto_{hashlib.sha256(first_user_msg.encode()).hexdigest()[:16]}"
+
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
         """MLflow pyfunc entrypoint — makes this agent deployable to Databricks Model Serving.
 
@@ -736,12 +835,13 @@ class DatabricksExpertAgent(ResponsesAgent):
         - ``session_id``: str — optional session key for multi-turn Lakebase memory.
         """
         custom = request.custom_inputs or {}
-        session_id = custom.get("session_id")
-        user_message = next(
-            (item.content for item in request.input if item.role == "user"),
-            "",
+        session_id = custom.get("session_id") or self._derive_session_id(request)
+        user_message, request_history = self._extract_conversation(request)
+        answer = self.chat(
+            user_message,
+            conversation_id=session_id,
+            request_history=request_history,
         )
-        answer = self.chat(user_message, conversation_id=session_id)
         return ResponsesAgentResponse(
             output=[self.create_text_output_item(answer, str(uuid4()))],
             custom_outputs=request.custom_inputs,
@@ -755,12 +855,13 @@ class DatabricksExpertAgent(ResponsesAgent):
         Databricks Model Serving to stream one final chunk back to the client.
         """
         custom = request.custom_inputs or {}
-        session_id = custom.get("session_id")
-        user_message = next(
-            (item.content for item in request.input if item.role == "user"),
-            "",
+        session_id = custom.get("session_id") or self._derive_session_id(request)
+        user_message, request_history = self._extract_conversation(request)
+        answer = self.chat(
+            user_message,
+            conversation_id=session_id,
+            request_history=request_history,
         )
-        answer = self.chat(user_message, conversation_id=session_id)
         yield ResponsesAgentStreamEvent(
             type="response.output_item.done",
             item=self.create_text_output_item(answer, str(uuid4())),

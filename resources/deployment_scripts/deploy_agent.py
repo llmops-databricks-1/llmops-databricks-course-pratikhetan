@@ -84,6 +84,31 @@ try:
 except ValueError as e:
     if "already serves model" in str(e):
         logger.warning(f"Skipping deploy: {e}")
+        logger.info("Updating environment_vars on existing endpoint...")
+        w_tmp = WorkspaceClient()
+        existing = w_tmp.serving_endpoints.get(endpoint_name)
+        served_model = existing.config.served_models[0]
+        w_tmp.serving_endpoints.update_config(
+            name=endpoint_name,
+            served_models=[
+                {
+                    "name": served_model.name,
+                    "model_name": served_model.model_name,
+                    "model_version": served_model.model_version,
+                    "scale_to_zero_enabled": served_model.scale_to_zero_enabled,
+                    "workload_size": served_model.workload_size,
+                    "environment_vars": {
+                        "GIT_SHA": git_sha,
+                        "MODEL_VERSION": model_version,
+                        "MODEL_SERVING_ENDPOINT_NAME": endpoint_name,
+                        "MLFLOW_EXPERIMENT_ID": experiment.experiment_id,
+                        "DATABRICKS_CLIENT_ID": f"{{{{secrets/{secret_scope}/client_id}}}}",
+                        "DATABRICKS_CLIENT_SECRET": f"{{{{secrets/{secret_scope}/client_secret}}}}",
+                        "DATABRICKS_HOST": WorkspaceClient().config.host,
+                    },
+                }
+            ],
+        )
     else:
         raise
 
