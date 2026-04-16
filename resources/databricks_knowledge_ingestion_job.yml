@@ -4,9 +4,10 @@ resources:
       name: databricks-knowledge-ingestion
       permissions:
         - level: CAN_MANAGE
-          group_name: users
+          user_name: pratikhetan@gmail.com
       tags:
         project_name: "arch-designer-agent"
+        environment: ${bundle.target}
 
       environments:
         - environment_key: default
