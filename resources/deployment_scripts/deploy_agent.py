@@ -54,28 +54,37 @@ logger.info(f"  Env:      {env}")
 # Deploy agent to Model Serving.
 # Lakebase credentials are injected as environment variables so the container
 # can create a connection without embedding secrets in model artifacts.
-agents.deploy(
-    model_name=model_name,
-    model_version=int(model_version),
-    endpoint_name=endpoint_name,
-    usage_policy_id=cfg.usage_policy_id,
-    scale_to_zero=True,
-    workload_size="Small",
-    deploy_feedback_model=False,
-    environment_vars={
-        "GIT_SHA": git_sha,
-        "MODEL_VERSION": model_version,
-        "MODEL_SERVING_ENDPOINT_NAME": endpoint_name,
-        "MLFLOW_EXPERIMENT_ID": experiment.experiment_id,
-        # Course-code-hub used LAKEBASE_SP_* names — our memory.py reads DATABRICKS_* instead:
-        # "LAKEBASE_SP_CLIENT_ID": f"{{{{secrets/{secret_scope}/client_id}}}}",
-        # "LAKEBASE_SP_CLIENT_SECRET": f"{{{{secrets/{secret_scope}/client_secret}}}}",
-        # "LAKEBASE_SP_HOST": WorkspaceClient().config.host,
-        "DATABRICKS_CLIENT_ID": f"{{{{secrets/{secret_scope}/client_id}}}}",
-        "DATABRICKS_CLIENT_SECRET": f"{{{{secrets/{secret_scope}/client_secret}}}}",
-        "DATABRICKS_HOST": WorkspaceClient().config.host,
-    },
-)
+# Deploy agent to Model Serving.
+# Lakebase credentials are injected as environment variables so the container
+# can create a connection without embedding secrets in model artifacts.
+try:
+    agents.deploy(
+        model_name=model_name,
+        model_version=int(model_version),
+        endpoint_name=endpoint_name,
+        usage_policy_id=cfg.usage_policy_id,
+        scale_to_zero=True,
+        workload_size="Small",
+        deploy_feedback_model=False,
+        environment_vars={
+            "GIT_SHA": git_sha,
+            "MODEL_VERSION": model_version,
+            "MODEL_SERVING_ENDPOINT_NAME": endpoint_name,
+            "MLFLOW_EXPERIMENT_ID": experiment.experiment_id,
+            # Course-code-hub used LAKEBASE_SP_* names — our memory.py reads DATABRICKS_* instead:
+            # "LAKEBASE_SP_CLIENT_ID": f"{{{{secrets/{secret_scope}/client_id}}}}",
+            # "LAKEBASE_SP_CLIENT_SECRET": f"{{{{secrets/{secret_scope}/client_secret}}}}",
+            # "LAKEBASE_SP_HOST": WorkspaceClient().config.host,
+            "DATABRICKS_CLIENT_ID": f"{{{{secrets/{secret_scope}/client_id}}}}",
+            "DATABRICKS_CLIENT_SECRET": f"{{{{secrets/{secret_scope}/client_secret}}}}",
+            "DATABRICKS_HOST": WorkspaceClient().config.host,
+        },
+    )
+except ValueError as e:
+    if "already serves model" in str(e):
+        logger.warning(f"Skipping deploy: {e}")
+    else:
+        raise
 
 logger.info("Deployment complete!")
 
