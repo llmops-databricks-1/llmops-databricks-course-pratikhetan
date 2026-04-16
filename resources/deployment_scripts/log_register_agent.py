@@ -47,7 +47,7 @@ registered_model = log_register_agent(
     cfg=cfg,
     git_sha=git_sha,
     run_id=run_id,
-    agent_code_path="../../arch_designer_agent.py",
+    agent_code_path="../../agent_model.py",
     model_name=model_name,
     evaluation_metrics=results.metrics,
 )
