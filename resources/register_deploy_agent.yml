@@ -2,6 +2,9 @@ resources:
   jobs:
     register_deploy_agent:
       name: arch-designer-agent-register-deploy-pipeline
+      permissions:
+        - level: CAN_MANAGE
+          group_name: users
       tags:
         project_name: "arch-designer-agent"
         environment: ${bundle.target}

@@ -2,6 +2,9 @@ resources:
   jobs:
     kb_pipeline_job:
       name: kb-pipeline
+      permissions:
+        - level: CAN_MANAGE
+          group_name: users
       description: >
         End-to-end knowledge base pipeline:
           Task 1 — Ingest new docs into databricks_knowledge_base

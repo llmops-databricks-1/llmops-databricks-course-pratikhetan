@@ -2,6 +2,9 @@ resources:
   jobs:
     arch_designer_agent_job:
       name: arch-designer-agent
+      permissions:
+        - level: CAN_MANAGE
+          group_name: users
       tags:
         project_name: "arch-designer-agent"
 

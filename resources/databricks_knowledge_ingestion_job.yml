@@ -2,6 +2,9 @@ resources:
   jobs:
     databricks_knowledge_ingestion_job:
       name: databricks-knowledge-ingestion
+      permissions:
+        - level: CAN_MANAGE
+          group_name: users
       tags:
         project_name: "arch-designer-agent"
 
