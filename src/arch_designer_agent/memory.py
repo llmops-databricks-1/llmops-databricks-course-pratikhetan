@@ -67,21 +67,19 @@ class LakebaseMemory:
         self._table_ensured = False
 
     def _ensure_messages_table(self, conn: psycopg.Connection) -> None:
-        """Create messages table if it doesn't exist (cached after first success)."""
+        """Verify messages table exists (cached after first success)."""
         if self._table_ensured:
             return
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS session_messages (
-                id SERIAL PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                message_data JSONB NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        exists = conn.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'session_messages'
             )
-        """)
-        conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_session_messages_session_id
-            ON session_messages(session_id)
-        """)
+        """).fetchone()[0]
+        if not exists:
+            raise RuntimeError(
+                "session_messages table does not exist in Lakebase. Create it manually before deploying."
+            )
         self._table_ensured = True
 
     def load_messages(self, session_id: str, _retried: bool = False) -> list[dict[str, Any]]:
@@ -119,7 +117,7 @@ class LakebaseMemory:
         resets the pool and retries once with a fresh connection and new token.
 
         Uses psycopg Jsonb adapter for proper JSONB type adaptation (avoids
-        relying on implicit text→jsonb cast which may fail in some environments).
+        relying on implicit text->jsonb cast which may fail in some environments).
         """
         try:
             # Reset pool before save to get a fresh token.  The save runs after
