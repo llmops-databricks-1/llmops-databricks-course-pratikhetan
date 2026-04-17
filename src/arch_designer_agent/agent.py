@@ -614,10 +614,24 @@ class DatabricksExpertAgent(ResponsesAgent):
                         # are new topics.
                         words = user_message.split()
                         _CONTINUATION_SIGNALS = {
-                            "it", "that", "this", "the", "its",
-                            "also", "instead", "but", "however",
-                            "make", "change", "adapt", "modify", "update",
-                            "add", "remove", "now", "what about",
+                            "it",
+                            "that",
+                            "this",
+                            "the",
+                            "its",
+                            "also",
+                            "instead",
+                            "but",
+                            "however",
+                            "make",
+                            "change",
+                            "adapt",
+                            "modify",
+                            "update",
+                            "add",
+                            "remove",
+                            "now",
+                            "what about",
                         }
                         is_short = len(words) <= 10
                         has_referential = any(
