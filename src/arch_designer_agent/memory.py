@@ -1,7 +1,6 @@
 """Session memory management using Lakebase (Databricks PostgreSQL)."""
 
 import contextlib
-import json
 import os
 import urllib.parse
 from typing import Any
