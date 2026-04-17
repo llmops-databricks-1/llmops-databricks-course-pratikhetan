@@ -597,7 +597,36 @@ class DatabricksExpertAgent(ResponsesAgent):
         if mcp_tool_names:
             kb_tool = sorted(mcp_tool_names)[0]
             try:
-                kb_context = self._execute_tool(kb_tool, {"query": user_message})
+                # For multi-turn conversations, include the original topic in the
+                # KB query ONLY when the follow-up is a short refinement (e.g.
+                # "make it batch", "add monitoring").  If the follow-up is a
+                # full standalone question, use it as-is to avoid polluting the
+                # KB search with the prior topic.
+                kb_query = user_message
+                if normalized_prior:
+                    first_user_msg = next(
+                        (m["content"] for m in normalized_prior if m.get("role") == "user"),
+                        "",
+                    )
+                    if first_user_msg and first_user_msg != user_message:
+                        # Heuristic: short messages or messages with referential
+                        # language are continuations; longer standalone questions
+                        # are new topics.
+                        words = user_message.split()
+                        _CONTINUATION_SIGNALS = {
+                            "it", "that", "this", "the", "its",
+                            "also", "instead", "but", "however",
+                            "make", "change", "adapt", "modify", "update",
+                            "add", "remove", "now", "what about",
+                        }
+                        is_short = len(words) <= 10
+                        has_referential = any(
+                            w.lower().rstrip(".,!?") in _CONTINUATION_SIGNALS
+                            for w in words[:3]  # check first 3 words
+                        )
+                        if is_short or has_referential:
+                            kb_query = f"{first_user_msg} — {user_message}"
+                kb_context = self._execute_tool(kb_tool, {"query": kb_query})
                 prefetch_id = f"prefetch_{uuid4().hex[:8]}"
                 # Inject as a synthetic assistant → tool pair so the LLM sees KB
                 # results exactly as if it had called the tool itself first.
@@ -611,7 +640,7 @@ class DatabricksExpertAgent(ResponsesAgent):
                                 "type": "function",
                                 "function": {
                                     "name": kb_tool,
-                                    "arguments": json.dumps({"query": user_message}),
+                                    "arguments": json.dumps({"query": kb_query}),
                                 },
                             }
                         ],
