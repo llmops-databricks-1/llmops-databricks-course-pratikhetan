@@ -10,6 +10,7 @@ from uuid import uuid4
 import psycopg
 from databricks.sdk import WorkspaceClient
 from loguru import logger
+from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 
@@ -102,7 +103,7 @@ class LakebaseMemory:
                     (session_id,),
                 ).fetchall()
                 return [row[0] for row in result]
-        except psycopg.OperationalError as exc:
+        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
             self._reset_pool()
             if not _retried:
                 logger.warning(f"Lakebase load_messages connection error ({exc}) — retrying with fresh pool")
@@ -115,22 +116,38 @@ class LakebaseMemory:
     def save_messages(self, session_id: str, messages: list[dict[str, Any]], _retried: bool = False) -> None:
         """Append messages to a session.
 
-        On connection errors (AdminShutdown, stale connections), resets the pool
-        and retries once with a fresh connection.
+        On connection errors (AdminShutdown, stale connections, expired tokens),
+        resets the pool and retries once with a fresh connection and new token.
+
+        Uses psycopg Jsonb adapter for proper JSONB type adaptation (avoids
+        relying on implicit text→jsonb cast which may fail in some environments).
         """
         try:
+            # Reset pool before save to get a fresh token.  The save runs after
+            # the full agent loop (30-60s), so the token from pool creation at
+            # _load_memory time may have expired.  This forces a new
+            # generate_database_credential call with fresh credentials.
+            if not _retried:
+                self._reset_pool()
+
             with self._get_pool().connection() as conn:
                 self._ensure_messages_table(conn)
                 for msg in messages:
                     conn.execute(
                         "INSERT INTO session_messages (session_id, message_data) VALUES (%s, %s)",
-                        (session_id, json.dumps(msg)),
+                        (session_id, Jsonb(msg)),
                     )
-        except psycopg.OperationalError as exc:
+                logger.info(f"Saved {len(messages)} message(s) to Lakebase for session '{session_id}'")
+        except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
             self._reset_pool()
             if not _retried:
                 logger.warning(f"Lakebase save_messages connection error ({exc}) — retrying with fresh pool")
                 return self.save_messages(session_id, messages, _retried=True)
+            # Re-raise on second failure so the trace captures the error
             raise
         except Exception as e:
-            logger.warning(f"Failed to save session messages: {e}")
+            # Re-raise so the caller's trace span captures the error.
+            # The caller (_save_memory in agent.py) wraps this in try/except
+            # to prevent breaking the response.
+            logger.error(f"Failed to save session messages: {type(e).__name__}: {e}")
+            raise
