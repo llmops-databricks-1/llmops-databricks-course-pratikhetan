@@ -1,5 +1,6 @@
 """Session memory management using Lakebase (Databricks PostgreSQL)."""
 
+import contextlib
 import json
 import os
 import urllib.parse
@@ -60,10 +61,8 @@ class LakebaseMemory:
     def _reset_pool(self) -> None:
         """Reset pool to force new credentials on next use."""
         if self._pool is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._pool.close()
-            except Exception:
-                pass
             self._pool = None
         self._table_ensured = False
 
