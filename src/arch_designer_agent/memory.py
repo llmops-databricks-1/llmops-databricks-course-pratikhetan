@@ -24,6 +24,7 @@ class LakebaseMemory:
         self.instance_name = instance_name
         self._pool: ConnectionPool | None = None
         self.client_id = os.getenv("DATABRICKS_CLIENT_ID", None)
+        self._table_ensured = False
 
     def _get_connection_string(self) -> str:
         """Build connection string for Lakebase.
@@ -59,11 +60,17 @@ class LakebaseMemory:
     def _reset_pool(self) -> None:
         """Reset pool to force new credentials on next use."""
         if self._pool is not None:
-            self._pool.close()
+            try:
+                self._pool.close()
+            except Exception:
+                pass
             self._pool = None
+        self._table_ensured = False
 
     def _ensure_messages_table(self, conn: psycopg.Connection) -> None:
-        """Create messages table if it doesn't exist."""
+        """Create messages table if it doesn't exist (cached after first success)."""
+        if self._table_ensured:
+            return
         conn.execute("""
             CREATE TABLE IF NOT EXISTS session_messages (
                 id SERIAL PRIMARY KEY,
@@ -76,9 +83,14 @@ class LakebaseMemory:
             CREATE INDEX IF NOT EXISTS idx_session_messages_session_id
             ON session_messages(session_id)
         """)
+        self._table_ensured = True
 
-    def load_messages(self, session_id: str) -> list[dict[str, Any]]:
-        """Load previous messages for a session."""
+    def load_messages(self, session_id: str, _retried: bool = False) -> list[dict[str, Any]]:
+        """Load previous messages for a session.
+
+        On connection errors (AdminShutdown, stale connections), resets the pool
+        and retries once with a fresh connection.
+        """
         try:
             with self._get_pool().connection() as conn:
                 self._ensure_messages_table(conn)
@@ -91,15 +103,22 @@ class LakebaseMemory:
                     (session_id,),
                 ).fetchall()
                 return [row[0] for row in result]
-        except psycopg.OperationalError:
+        except psycopg.OperationalError as exc:
             self._reset_pool()
+            if not _retried:
+                logger.warning(f"Lakebase load_messages connection error ({exc}) — retrying with fresh pool")
+                return self.load_messages(session_id, _retried=True)
             raise
         except Exception as e:
             logger.warning(f"Failed to load session messages: {e}")
             return []
 
-    def save_messages(self, session_id: str, messages: list[dict[str, Any]]) -> None:
-        """Append messages to a session."""
+    def save_messages(self, session_id: str, messages: list[dict[str, Any]], _retried: bool = False) -> None:
+        """Append messages to a session.
+
+        On connection errors (AdminShutdown, stale connections), resets the pool
+        and retries once with a fresh connection.
+        """
         try:
             with self._get_pool().connection() as conn:
                 self._ensure_messages_table(conn)
@@ -108,8 +127,11 @@ class LakebaseMemory:
                         "INSERT INTO session_messages (session_id, message_data) VALUES (%s, %s)",
                         (session_id, json.dumps(msg)),
                     )
-        except psycopg.OperationalError:
+        except psycopg.OperationalError as exc:
             self._reset_pool()
+            if not _retried:
+                logger.warning(f"Lakebase save_messages connection error ({exc}) — retrying with fresh pool")
+                return self.save_messages(session_id, messages, _retried=True)
             raise
         except Exception as e:
             logger.warning(f"Failed to save session messages: {e}")
