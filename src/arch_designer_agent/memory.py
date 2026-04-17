@@ -129,10 +129,13 @@ class LakebaseMemory:
 
             with self._get_pool().connection() as conn:
                 self._ensure_messages_table(conn)
-                for msg in messages:
+                # Supply id explicitly to avoid needing USAGE on the
+                # session_messages_id_seq sequence (SPN may lack that grant).
+                max_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM session_messages").fetchone()[0]
+                for i, msg in enumerate(messages, start=max_id + 1):
                     conn.execute(
-                        "INSERT INTO session_messages (session_id, message_data) VALUES (%s, %s)",
-                        (session_id, Jsonb(msg)),
+                        "INSERT INTO session_messages (id, session_id, message_data) VALUES (%s, %s, %s)",
+                        (i, session_id, Jsonb(msg)),
                     )
                 logger.info(f"Saved {len(messages)} message(s) to Lakebase for session '{session_id}'")
         except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
