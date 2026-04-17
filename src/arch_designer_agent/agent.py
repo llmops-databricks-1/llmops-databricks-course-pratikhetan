@@ -365,9 +365,25 @@ class DatabricksExpertAgent(ResponsesAgent):
         tool_name = f"{self.cfg.catalog}__{self.cfg.schema}__kb_chunks_index"
 
         def _kb_search(query: str) -> str:
+            import os
+
             from databricks.vector_search.client import VectorSearchClient
 
-            vs_client = VectorSearchClient()
+            # Pass SPN credentials explicitly — VectorSearchClient does not
+            # auto-detect them from environment like WorkspaceClient does.
+            vs_kwargs: dict[str, str] = {}
+            host = os.getenv("DATABRICKS_HOST")
+            client_id = os.getenv("DATABRICKS_CLIENT_ID")
+            client_secret = os.getenv("DATABRICKS_CLIENT_SECRET")
+            pat = os.getenv("DATABRICKS_TOKEN")
+            if host:
+                vs_kwargs["workspace_url"] = host
+            if client_id and client_secret:
+                vs_kwargs["service_principal_client_id"] = client_id
+                vs_kwargs["service_principal_client_secret"] = client_secret
+            elif pat:
+                vs_kwargs["personal_access_token"] = pat
+            vs_client = VectorSearchClient(**vs_kwargs)
             index = vs_client.get_index(index_name=index_name)
             results = index.similarity_search(
                 query_text=query,
