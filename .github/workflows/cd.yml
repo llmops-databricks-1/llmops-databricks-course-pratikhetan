@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 #v4.2.2
 
       - name: Install Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@v0.297.1
 
       - name: Configure Databricks CLI
         run: |
