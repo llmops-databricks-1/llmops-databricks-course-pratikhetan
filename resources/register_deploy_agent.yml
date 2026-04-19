@@ -1,14 +1,13 @@
 resources:
   jobs:
-    databricks_knowledge_ingestion_job:
-      name: databricks-knowledge-ingestion
+    register_deploy_agent:
+      name: arch-designer-agent-register-deploy-pipeline
       permissions:
         - level: CAN_MANAGE
           user_name: pratikhetan@gmail.com
       tags:
         project_name: "arch-designer-agent"
         environment: ${bundle.target}
-
       environments:
         - environment_key: default
           spec:
@@ -17,11 +16,21 @@ resources:
               - ../dist/*.whl
 
       tasks:
-        - task_key: databricks_knowledge_ingestion
+        - task_key: log_register_agent
           environment_key: default
           notebook_task:
-            notebook_path: ../notebooks/1.3_databricks_knowledge_ingestion.py
+            notebook_path: deployment_scripts/log_register_agent.py
             base_parameters:
               env: ${bundle.target}
               git_sha: "${var.git_sha}"
               run_id: "{{job.run_id}}"
+
+        - task_key: deploy_agent
+          depends_on:
+            - task_key: log_register_agent
+          environment_key: default
+          notebook_task:
+            notebook_path: deployment_scripts/deploy_agent.py
+            base_parameters:
+              env: ${bundle.target}
+              git_sha: "${var.git_sha}"

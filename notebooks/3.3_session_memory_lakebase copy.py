@@ -12,11 +12,13 @@
 
 from uuid import uuid4
 
-from arxiv_curator.config import get_env, load_config
-from arxiv_curator.memory import LakebaseMemory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.database import DatabaseInstance, DatabaseInstanceState
 from loguru import logger
+from pyspark.sql import SparkSession
+
+from arch_designer_agent.config import get_env, load_config
+from arch_designer_agent.memory import LakebaseMemory
 
 # COMMAND ----------
 
@@ -32,9 +34,11 @@ from loguru import logger
 # COMMAND ----------
 
 w = WorkspaceClient()
-cfg = load_config("../project_config.yml")
+spark = SparkSession.builder.getOrCreate()
+env = get_env(spark)
+cfg = load_config("../project_config.yml", env)
 
-instance_name = "arxiv-agent-instance"
+instance_name = "arch-agent-memory"
 
 usage_policy_id = cfg.usage_policy_id  # TODO: replace with your usage policy ID
 
@@ -163,13 +167,7 @@ for msg in full_conversation:
 
 # COMMAND ----------
 
-from arxiv_curator.config import load_config
 from openai import OpenAI
-from pyspark.sql import SparkSession
-
-spark = SparkSession.builder.getOrCreate()
-env = get_env(spark)
-cfg = load_config("../project_config.yml", env)
 
 # Create OpenAI client for Databricks
 client = OpenAI(

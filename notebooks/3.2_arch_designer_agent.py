@@ -162,6 +162,7 @@ agent = DatabricksExpertAgent(
     spark=spark,
     config=cfg,
     workspace_client=w,
+    system_prompt=DatabricksExpertAgent.DEFAULT_SYSTEM_PROMPT,
 )
 
 logger.info("Agent ready.")

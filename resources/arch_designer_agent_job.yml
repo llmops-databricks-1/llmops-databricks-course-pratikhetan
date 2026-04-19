@@ -1,9 +1,13 @@
 resources:
   jobs:
-    hello_world_job:
-      name: hello-world
+    arch_designer_agent_job:
+      name: arch-designer-agent
+      permissions:
+        - level: CAN_MANAGE
+          user_name: pratikhetan@gmail.com
       tags:
-        project_name: "llmops-databricks-course-pratikhetan"
+        project_name: "arch-designer-agent"
+        environment: ${bundle.target}
 
       environments:
         - environment_key: default
@@ -13,10 +17,10 @@ resources:
               - ../dist/*.whl
 
       tasks:
-        - task_key: hello_world
+        - task_key: arch_designer_agent
           environment_key: default
           notebook_task:
-            notebook_path: ../notebooks/hello_world.py
+            notebook_path: ../notebooks/3.2_arch_designer_agent.py
             base_parameters:
               env: ${bundle.target}
               git_sha: "${var.git_sha}"

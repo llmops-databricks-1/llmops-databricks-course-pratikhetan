@@ -13,11 +13,11 @@ class ProjectConfig(BaseModel):
 
     catalog: str = Field(..., description="Unity Catalog name")
     db_schema: str = Field(..., description="Schema name", alias="schema")
-    volume: str = Field(..., description="Volume name")
+    volume: str = Field(default="", description="Volume name")
     llm_endpoint: str = Field(..., description="LLM endpoint name")
-    embedding_endpoint: str = Field(..., description="Embedding endpoint name")
-    warehouse_id: str = Field(..., description="Warehouse ID")
-    vector_search_endpoint: str = Field(..., description="Vector search endpoint name")
+    embedding_endpoint: str = Field(default="", description="Embedding endpoint name")
+    warehouse_id: str = Field(default="", description="Warehouse ID")
+    vector_search_endpoint: str = Field(default="", description="Vector search endpoint name")
     genie_space_id: str | None = Field(None, description="Genie space ID for MCP integration")
     lakebase_instance: str | None = Field(
         None, description="Lakebase (PostgreSQL) instance name for conversation memory"
@@ -26,14 +26,13 @@ class ProjectConfig(BaseModel):
         None,
         description="Lakebase usage policy ID (required when creating a new instance)",
     )
-    system_prompt: str = Field(
-        default=(
-            "You are a Databricks Architecture Design & Optimization Agent."
-            " You help users design, evaluate, and optimize data and AI"
-            " architectures, and provide performance and best practice"
-            " guidance for the Databricks Lakehouse Platform."
-        ),
-        description="System prompt for the agent",
+    experiment_name: str = Field(
+        default="/Shared/arch-designer-agent",
+        description="MLflow experiment path for evaluation and model logging",
+    )
+    system_prompt: str | None = Field(
+        default=None,
+        description="System prompt for the agent (uses agent DEFAULT_SYSTEM_PROMPT when not set)",
     )
 
     model_config = {"populate_by_name": True}

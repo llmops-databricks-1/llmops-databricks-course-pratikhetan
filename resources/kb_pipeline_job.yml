@@ -2,12 +2,16 @@ resources:
   jobs:
     kb_pipeline_job:
       name: kb-pipeline
+      permissions:
+        - level: CAN_MANAGE
+          user_name: pratikhetan@gmail.com
       description: >
         End-to-end knowledge base pipeline:
           Task 1 — Ingest new docs into databricks_knowledge_base
           Task 2 — Chunk new docs + sync Vector Search index
       tags:
-        project_name: "llmops-databricks-course-pratikhetan"
+        project_name: "arch-designer-agent"
+        environment: ${bundle.target}
 
       environments:
         - environment_key: default
