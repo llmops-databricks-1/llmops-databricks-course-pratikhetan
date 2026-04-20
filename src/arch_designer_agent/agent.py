@@ -947,6 +947,7 @@ _SNAPSHOT_INTERNAL_SUBSTRINGS = {
     "llmops_course",
     "online_index_view",
     "event_log_",
+    "mlflow",
 }
 
 

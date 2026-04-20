@@ -58,6 +58,7 @@ _INTERNAL_RESOURCE_SUBSTRINGS = {
     "llmops_course",
     "online_index_view",
     "event_log_",
+    "mlflow",
     # agents.deploy() auto-created inference & monitoring tables
     "_payload",
     "trace_logs",
