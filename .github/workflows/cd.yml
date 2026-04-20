@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feature/week6
   pull_request:
     branches:
       - main
