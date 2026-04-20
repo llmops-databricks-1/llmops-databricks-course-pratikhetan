@@ -1,12 +1,11 @@
 # Databricks notebook source
-import os
 
 import mlflow
 import pandas as pd
 from loguru import logger
 from pyspark.sql import SparkSession
 
-from arch_designer_agent.config import ProjectConfig, get_env, load_config
+from arch_designer_agent.config import get_env, load_config
 from arch_designer_agent.evaluation import (
     architectural_clarity_guideline,
     cites_databricks_service,
