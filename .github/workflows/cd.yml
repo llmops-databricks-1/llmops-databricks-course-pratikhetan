@@ -56,9 +56,8 @@ jobs:
         run: uv build
 
       - name: Deploy bundle to Databricks
-        env:
-          DATABRICKS_TF_EXEC_PATH: ${{ env.TERRAFORM_CLI_PATH }}/terraform
         run: |
+          export DATABRICKS_TF_EXEC_PATH=$(which terraform)
           databricks bundle deploy \
             --target $DEPLOY_TARGET \
             --var="git_sha=${{ github.sha }}"
