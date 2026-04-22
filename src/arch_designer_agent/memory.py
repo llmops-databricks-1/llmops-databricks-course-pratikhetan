@@ -129,6 +129,11 @@ class LakebaseMemory:
 
             with self._get_pool().connection() as conn:
                 self._ensure_messages_table(conn)
+                # Clear stale history for this session before saving
+                conn.execute("DELETE FROM session_messages WHERE session_id = %s "
+                               "AND created_at < NOW() - INTERVAL '1 hour'",
+                            (session_id,),
+                            )
                 # Supply id explicitly to avoid needing USAGE on the
                 # session_messages_id_seq sequence (SPN may lack that grant).
                 max_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM session_messages").fetchone()[0]
