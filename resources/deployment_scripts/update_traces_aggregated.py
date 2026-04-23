@@ -24,7 +24,8 @@ mlflow.set_experiment(cfg.experiment_name)
 catalog = cfg.catalog
 schema = cfg.db_schema
 
-traces_table = f"{catalog}.{schema}.arch_designer_agent_traces"
+# Use the configured traces table; fall back to the default agents.deploy() naming convention
+traces_table = cfg.traces_table or f"{catalog}.{schema}.{cfg.serving_endpoint_name.replace('-', '_')}_payload"
 aggregated_view = f"{catalog}.{schema}.arch_agent_traces_aggregated"
 
 # COMMAND ----------
@@ -46,7 +47,7 @@ new_traces_df = spark.sql(f"""
         ).content[0].text AS response_text
     FROM {traces_table} t
     WHERE tags['model_serving_endpoint_name']
-            = 'arch-designer-agent-dev'
+            = '{cfg.serving_endpoint_name}'
       AND (t.assessments IS NULL OR size(t.assessments) = 0)
 """)
 

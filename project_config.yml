@@ -14,6 +14,8 @@ dev:
   usage_policy_id: null
   experiment_name: /Shared/arch-designer-agent
   experiment_permissions_user: pratikhetan@gmail.com
+  serving_endpoint_name: arch-designer-agent-dev
+  traces_table: mlops_dev.pratikhe.arch_designer_agent_dev_payload
   knowledge_base_table: databricks_knowledge_base
 
 acc:
@@ -29,6 +31,8 @@ acc:
   usage_policy_id: null
   experiment_name: /Shared/arch-designer-agent
   experiment_permissions_user: pratikhetan@gmail.com
+  serving_endpoint_name: arch-designer-agent-acc
+  traces_table: mlops_dev.pratikhe.arch_designer_agent_acc_payload
   knowledge_base_table: databricks_knowledge_base
 
 # Production environment
@@ -45,6 +49,8 @@ prd:
   usage_policy_id: null
   experiment_name: /Shared/arch-designer-agent
   experiment_permissions_user: pratikhetan@gmail.com
+  serving_endpoint_name: arch-designer-agent-prd
+  traces_table: mlops_prd.pratikhe.arch_designer_agent_prd_payload
   knowledge_base_table: databricks_knowledge_base
 
 # Model configuration

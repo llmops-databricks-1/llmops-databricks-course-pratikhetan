@@ -1,0 +1,30 @@
+resources:
+  jobs:
+    update_traces_job:
+      name: arch-designer-agent-trace-evaluation
+      permissions:
+        - level: CAN_MANAGE
+          user_name: pratikhetan@gmail.com
+      tags:
+        project_name: "arch-designer-agent"
+        environment: ${bundle.target}
+
+      schedule:
+        quartz_cron_expression: "0 0 */6 * * ?"  # Every 6 hours
+        timezone_id: "UTC"
+        pause_status: ${var.schedule_pause_status}
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - ../dist/*.whl
+
+      tasks:
+        - task_key: update_traces_aggregated
+          environment_key: default
+          notebook_task:
+            notebook_path: deployment_scripts/update_traces_aggregated.py
+            base_parameters:
+              env: ${bundle.target}

@@ -34,6 +34,14 @@ class ProjectConfig(BaseModel):
         None,
         description="User email to grant CAN_MANAGE on the MLflow experiment (useful when the job runs as a SPN)",
     )
+    serving_endpoint_name: str = Field(
+        default="arch-designer-agent-dev",
+        description="Name of the Model Serving endpoint (used by the trace evaluation job)",
+    )
+    traces_table: str | None = Field(
+        None,
+        description="Unity Catalog table where `agents.deploy()` writes inference traces; defaults to <catalog>.<schema>.arch_designer_agent_<env>_payload",
+    )
     system_prompt: str | None = Field(
         default=None,
         description="System prompt for the agent (uses agent DEFAULT_SYSTEM_PROMPT when not set)",

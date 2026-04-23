@@ -128,3 +128,27 @@ w.serving_endpoints.set_permissions(
     ],
 )
 logger.info(f"Permissions set on endpoint {endpoint_name}")
+
+# COMMAND ----------
+
+# Grant CAN_MANAGE on all jobs auto-created by agents.deploy() for this endpoint
+# (payload logging, trace archiving, etc.) so they are visible in the Jobs UI.
+# These jobs are created by the SPN and have names containing the endpoint name.
+auto_jobs = [j for j in w.jobs.list(name=endpoint_name) if j.settings and j.settings.name]
+if not auto_jobs:
+    logger.warning(f"No auto-created jobs found matching endpoint name '{endpoint_name}'")
+else:
+    for job in auto_jobs:
+        try:
+            w.jobs.set_permissions(
+                job_id=str(job.job_id),
+                access_control_list=[
+                    AccessControlRequest(
+                        user_name=cfg.experiment_permissions_user or "pratikhetan@gmail.com",
+                        permission_level=PermissionLevel.CAN_MANAGE,
+                    ),
+                ],
+            )
+            logger.info(f"Granted CAN_MANAGE on auto-created job: {job.settings.name} (id={job.job_id})")
+        except Exception as e:
+            logger.warning(f"Could not set permissions on job {job.job_id}: {e}")
