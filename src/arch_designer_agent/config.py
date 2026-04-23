@@ -30,6 +30,10 @@ class ProjectConfig(BaseModel):
         default="/Shared/arch-designer-agent",
         description="MLflow experiment path for evaluation and model logging",
     )
+    experiment_permissions_user: str | None = Field(
+        None,
+        description="User email to grant CAN_MANAGE on the MLflow experiment (useful when the job runs as a SPN)",
+    )
     system_prompt: str | None = Field(
         default=None,
         description="System prompt for the agent (uses agent DEFAULT_SYSTEM_PROMPT when not set)",

@@ -13,6 +13,7 @@ dev:
   lakebase_instance: arch-agent-memory
   usage_policy_id: null
   experiment_name: /Shared/arch-designer-agent
+  experiment_permissions_user: pratikhetan@gmail.com
   knowledge_base_table: databricks_knowledge_base
 
 acc:
@@ -27,6 +28,7 @@ acc:
   lakebase_instance: arch-agent-memory
   usage_policy_id: null
   experiment_name: /Shared/arch-designer-agent
+  experiment_permissions_user: pratikhetan@gmail.com
   knowledge_base_table: databricks_knowledge_base
 
 # Production environment
@@ -42,6 +44,7 @@ prd:
   lakebase_instance: arch-agent-memory
   usage_policy_id: null
   experiment_name: /Shared/arch-designer-agent
+  experiment_permissions_user: pratikhetan@gmail.com
   knowledge_base_table: databricks_knowledge_base
 
 # Model configuration
